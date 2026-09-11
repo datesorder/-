@@ -37,7 +37,11 @@ const db = {
     }
   },
   async saveSettings(settings) {
-    await window.storage.set('settings', JSON.stringify(settings), SHARED);
+    try {
+      await window.storage.set('settings', JSON.stringify(settings), SHARED);
+    } catch {
+      // window.storage אינו קיים מחוץ לסביבת Claude - מתעלמים בשקט
+    }
   },
   async listSaleIds() {
     try {
@@ -48,7 +52,11 @@ const db = {
     }
   },
   async saveSaleIds(ids) {
-    await window.storage.set('salesIndex', JSON.stringify(ids), SHARED);
+    try {
+      await window.storage.set('salesIndex', JSON.stringify(ids), SHARED);
+    } catch {
+      // window.storage אינו קיים מחוץ לסביבת Claude - מתעלמים בשקט
+    }
   },
   async getSale(id) {
     try {
@@ -59,7 +67,11 @@ const db = {
     }
   },
   async saveSale(sale) {
-    await window.storage.set(`sale:${sale.id}`, JSON.stringify(sale), SHARED);
+    try {
+      await window.storage.set(`sale:${sale.id}`, JSON.stringify(sale), SHARED);
+    } catch {
+      // window.storage אינו קיים מחוץ לסביבת Claude - מתעלמים בשקט
+    }
   },
   async getOrders(saleId) {
     try {
@@ -70,7 +82,11 @@ const db = {
     }
   },
   async saveOrders(saleId, orders) {
-    await window.storage.set(`orders:${saleId}`, JSON.stringify(orders), SHARED);
+    try {
+      await window.storage.set(`orders:${saleId}`, JSON.stringify(orders), SHARED);
+    } catch {
+      // window.storage אינו קיים מחוץ לסביבת Claude - מתעלמים בשקט
+    }
   },
   // TODO(Supabase): today this is a simple key/value lookup. In Supabase this
   // becomes `select * from customers where phone = $1`.
@@ -87,7 +103,11 @@ const db = {
   },
   // TODO(Supabase): becomes an upsert into `customers` (on conflict phone).
   async saveCustomer(customer) {
-    await window.storage.set(`customer:${sanitizePhoneKey(customer.phone)}`, JSON.stringify(customer), SHARED);
+    try {
+      await window.storage.set(`customer:${sanitizePhoneKey(customer.phone)}`, JSON.stringify(customer), SHARED);
+    } catch {
+      // window.storage אינו קיים מחוץ לסביבת Claude - מתעלמים בשקט
+    }
   },
 };
 
