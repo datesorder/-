@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabaseClient';
-import { adminGetSettings, adminListSales, adminCreateSale } from './lib/adminApi';
+import { adminGetSettings, adminListSales, adminCreateSale, adminGetOrders } from './lib/adminApi';
 import { getOpenSale, createOrder } from './lib/publicApi';
 
 /* =========================================================================
@@ -1908,7 +1908,7 @@ export default function App() {
   }, []);
 
   const loadOrdersForSale = useCallback(async (saleId) => {
-    const orders = await db.getOrders(saleId);
+    const orders = await adminGetOrders(saleId);
     setOrdersBySaleId((m) => ({ ...m, [saleId]: orders }));
     return orders;
   }, []);
