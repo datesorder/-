@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabaseClient';
-import { adminGetSettings } from './lib/adminApi';
+import { adminGetSettings, adminListSales } from './lib/adminApi';
 
 /* =========================================================================
    שכבת גישה לנתונים (Data Access Layer)
@@ -1348,6 +1348,26 @@ function SalesManagementTab({ app }) {
   }
 
   const [newSale, setNewSale] = useState(freshNewSaleForm);
+  const [otherSales, setOtherSales] = useState([]);
+  const [otherSalesError, setOtherSalesError] = useState('');
+
+  // רשימת "שכפול מכירה קודמת" נטענת ישירות מ-Supabase, במבודד לגמרי -
+  // לא נוגעת ב-app.salesIndex/app.salesById (עדיין מוזנים מ-window.storage
+  // ומשמשים את "מכירה נוכחית" ואת שאר האתר בדיוק כפי שהיה עד עכשיו).
+  useEffect(() => {
+    let active = true;
+    adminListSales()
+      .then((data) => {
+        if (active) setOtherSales(data);
+      })
+      .catch((err) => {
+        console.error('adminListSales failed', err);
+        if (active) setOtherSalesError('שגיאה בטעינת רשימת המכירות מ-Supabase: ' + (err?.message || 'שגיאה לא ידועה'));
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const currentSale = app.currentSaleId ? app.salesById[app.currentSaleId] : null;
 
@@ -1363,7 +1383,7 @@ function SalesManagementTab({ app }) {
       return;
     }
     setNewSaleError('');
-    const sourcePrices = newSale.sourcePricesId ? app.salesById[newSale.sourcePricesId]?.prices : null;
+    const sourcePrices = newSale.sourcePricesId ? otherSales.find((s) => s.id === newSale.sourcePricesId)?.prices : null;
     await app.createSale({
       name: newSale.name.trim(),
       stockEnabled: newSale.stockEnabled,
@@ -1382,7 +1402,7 @@ function SalesManagementTab({ app }) {
   }
 
   function handleDuplicate(sourceId) {
-    const source = app.salesById[sourceId];
+    const source = otherSales.find((s) => s.id === sourceId);
     if (!source) return;
     // ממלא מראש שם + מלאי + מחירים מהמכירה שנבחרה; הדדליין תמיד נקבע מחדש
     // בטופס למטה - זו החלטה חדשה שצריך לקבל לכל מכירה, לא משהו שמשכפלים.
@@ -1464,13 +1484,14 @@ function SalesManagementTab({ app }) {
           {newSaleError && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800">{newSaleError}</p>}
           <Button onClick={handleOpenSale}>פתיחת מכירה חדשה</Button>
 
-          {app.salesIndex.length > 0 && (
+          {otherSalesError && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800">{otherSalesError}</p>}
+          {otherSales.length > 0 && (
             <div className="pt-2">
               <span className="text-xs text-stone-400">או שכפול הגדרות ממכירה קודמת (מחירים + מלאי בלבד, ללא הזמנות, דדליין תמיד נקבע מחדש):</span>
               <div className="mt-2 flex flex-wrap gap-2">
-                {app.salesIndex.slice(0, 4).map((id) => (
-                  <Button key={id} variant="subtle" onClick={() => handleDuplicate(id)}>
-                    שכפל את "{app.salesById[id]?.name}"
+                {otherSales.map((s) => (
+                  <Button key={s.id} variant="subtle" onClick={() => handleDuplicate(s.id)}>
+                    שכפל את "{s.name}"
                   </Button>
                 ))}
               </div>
