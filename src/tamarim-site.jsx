@@ -1419,15 +1419,21 @@ function SalesManagementTab({ app }) {
     }
     setNewSaleError('');
     const sourcePrices = newSale.sourcePricesId ? otherSales.find((s) => s.id === newSale.sourcePricesId)?.prices : null;
-    await app.createSale({
-      name: newSale.name.trim(),
-      stockEnabled: newSale.stockEnabled,
-      stockTotal: Number(newSale.stockTotal) || 0,
-      closeCurrent: newSale.closeCurrent,
-      prices: sourcePrices || undefined,
-      deadline: deadline.toISOString(),
-    });
-    setNewSale(freshNewSaleForm());
+    try {
+      await app.createSale({
+        name: newSale.name.trim(),
+        stockEnabled: newSale.stockEnabled,
+        stockTotal: Number(newSale.stockTotal) || 0,
+        closeCurrent: newSale.closeCurrent,
+        prices: sourcePrices || undefined,
+        deadline: deadline.toISOString(),
+      });
+      setNewSale(freshNewSaleForm());
+    } catch (err) {
+      // DEBUG זמני בלבד: חושף את שגיאת ה-RPC האמיתית במקום לבלוע אותה בשקט.
+      console.error('createSale failed', err);
+      alert('שגיאה בפתיחת מכירה (DEBUG): ' + (err?.message || String(err)));
+    }
   }
 
   async function handleCloseSale() {
