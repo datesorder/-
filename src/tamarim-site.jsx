@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabaseClient';
-import { adminGetSettings, adminListSales } from './lib/adminApi';
+import { adminGetSettings, adminListSales, adminCreateSale } from './lib/adminApi';
 import { getOpenSale, createOrder } from './lib/publicApi';
 
 /* =========================================================================
@@ -1985,28 +1985,25 @@ export default function App() {
         await db.saveSale(closed);
         setSalesById((m) => ({ ...m, [closed.id]: closed }));
       }
-      const id = uid('sale_');
-      const sale = {
-        id,
+      // עותק קבוע של המחירים בזמן פתיחת המכירה - זו הפעולה המקבילה ל-
+      // "sale.prices := settings.default_prices" שכבר קיימת בפועל בתוך
+      // admin_create_sale() בצד השרת.
+      const finalPrices = prices ? { ...prices } : { ...settings.defaultPrices };
+      // היצירה עצמה עוברת דרך ה-RPC של Supabase - ה-id האמיתי (uuid) מגיע
+      // בחזרה מהשרת, לא נוצר יותר מקומית עם uid('sale_').
+      const sale = await adminCreateSale({
         name,
-        openDate: new Date().toISOString(),
-        closeDate: null,
-        status: 'open',
+        deadline: deadline || null,
+        prices: finalPrices,
         stockEnabled: !!stockEnabled,
         stockTotal: Number(stockTotal) || 0,
-        orderSeq: 0,
-        // עותק קבוע של המחירים בזמן פתיחת המכירה - זו הפעולה המקבילה ל-
-        // "sale.prices := settings.default_prices" בפונקציית ה-SQL העתידית.
-        prices: prices ? { ...prices } : { ...settings.defaultPrices },
-        deadline: deadline || null,
-      };
-      const nextIndex = [id, ...salesIndex];
-      await db.saveSale(sale);
-      await db.saveSaleIds(nextIndex);
+        closeCurrent: !!closeCurrent,
+      });
+      const nextIndex = [sale.id, ...salesIndex];
       setSalesIndex(nextIndex);
-      setSalesById((m) => ({ ...m, [id]: sale }));
-      setOrdersBySaleId((m) => ({ ...m, [id]: [] }));
-      setCurrentSaleId(id);
+      setSalesById((m) => ({ ...m, [sale.id]: sale }));
+      setOrdersBySaleId((m) => ({ ...m, [sale.id]: [] }));
+      setCurrentSaleId(sale.id);
       notify('המכירה נפתחה');
     },
     [currentSaleId, salesById, salesIndex, settings]
