@@ -510,12 +510,11 @@ function CustomerView({ settings, sale, orders, onSubmitOrder, onGoAdmin }) {
     return '';
   }
 
-  async function doSubmit({ markPaid = false, prePaidWindow = null } = {}) {
+  async function doSubmit({ markPaid = false, openPaymentAfter = false } = {}) {
     if (submitting) return; // מונע הזמנה כפולה בלחיצה כפולה/מהירה
     const err = validate();
     if (err) {
       setError(err);
-      if (prePaidWindow) prePaidWindow.close();
       return;
     }
     setError('');
@@ -524,13 +523,11 @@ function CustomerView({ settings, sale, orders, onSubmitOrder, onGoAdmin }) {
       const order = await onSubmitOrder({ ...form, amount, markPaid });
       setLastOrder(order);
       setStep('confirmation');
-      if (prePaidWindow) {
-        if (paymentLink) prePaidWindow.location.href = paymentLink;
-        else prePaidWindow.close();
+      if (openPaymentAfter && paymentLink) {
+        window.open(paymentLink, '_blank', 'noreferrer');
       }
     } catch (err2) {
       console.error('order submit failed', err2);
-      if (prePaidWindow) prePaidWindow.close();
       if (err2 && err2.message === 'SALE_CLOSED') {
         setError('המכירה נסגרה להזמנות (המועד האחרון להזמנה עבר). לא ניתן לשלוח את ההזמנה.');
       } else {
@@ -547,13 +544,11 @@ function CustomerView({ settings, sale, orders, onSubmitOrder, onGoAdmin }) {
   }
 
   // Bit/PayBox: לחיצה על כפתור התשלום שולחת את ההזמנה אוטומטית ומסמנת
-  // אותה כ"שולם" (דיווח הלקוח, לא אימות טכני), ואז פותחת את קישור התשלום.
-  // החלון נפתח באופן סינכרוני על הקליק עצמו (לפני ה-await) כדי שחוסמי
-  // פופ-אפ לא יחסמו אותו, ומקבל יעד רק אחרי שההזמנה נוצרה בהצלחה.
+  // אותה כ"שולם" (דיווח הלקוח, לא אימות טכני), ואז פותחת את קישור התשלום
+  // ישירות בלשונית/חלון חדש - בלי ליצור about:blank ולנווט אליו בנפרד.
   async function handlePayAndSubmit() {
     if (submitting) return;
-    const win = paymentLink ? window.open('', '_blank', 'noopener') : null;
-    await doSubmit({ markPaid: true, prePaidWindow: win });
+    await doSubmit({ markPaid: true, openPaymentAfter: true });
   }
 
   if (step === 'confirmation' && lastOrder) {
@@ -781,6 +776,7 @@ const ADMIN_TABS = [
   { v: 'dashboard', label: 'סיכום' },
   { v: 'orders', label: 'הזמנות' },
   { v: 'history', label: 'היסטוריה' },
+  { v: 'sales', label: 'ניהול מכירה' },
   { v: 'settings', label: 'הגדרות' },
 ];
 
@@ -819,6 +815,7 @@ function AdminView({ app }) {
       {tab === 'dashboard' && <DashboardTab app={app} goOrders={goOrders} />}
       {tab === 'orders' && <OrdersTab app={app} saleId={app.currentSaleId} initialPreset={ordersFilterPreset} />}
       {tab === 'history' && <HistoryTab app={app} />}
+      {tab === 'sales' && <SalesManagementTab app={app} />}
       {tab === 'settings' && <SettingsTab app={app} />}
     </div>
   );
@@ -1282,9 +1279,7 @@ function HistoryTab({ app }) {
 
 /* ---- הגדרות ---- */
 
-function SettingsTab({ app }) {
-  const [form, setForm] = useState(app.settings);
-  const [saved, setSaved] = useState(false);
+function SalesManagementTab({ app }) {
   const [newSaleError, setNewSaleError] = useState('');
 
   function defaultDeadlineDate() {
@@ -1309,39 +1304,6 @@ function SettingsTab({ app }) {
   const [newSale, setNewSale] = useState(freshNewSaleForm);
 
   const currentSale = app.currentSaleId ? app.salesById[app.currentSaleId] : null;
-
-  function update(field, value) {
-    setForm((f) => ({ ...f, [field]: value }));
-  }
-
-  function updateTier(index, field, value) {
-    setForm((f) => {
-      const tiers = f.defaultPrices.tiers.map((t, i) => (i === index ? { ...t, [field]: Number(value) || 0 } : t));
-      return { ...f, defaultPrices: { ...f.defaultPrices, tiers } };
-    });
-  }
-
-  function addPriceTier() {
-    setForm((f) => {
-      const tiers = f.defaultPrices.tiers;
-      const lastMin = tiers.length ? Math.max(...tiers.map((t) => t.minQty)) : 0;
-      return { ...f, defaultPrices: { ...f.defaultPrices, tiers: [...tiers, { minQty: lastMin + 1, pricePerUnit: 0 }] } };
-    });
-  }
-
-  function removePriceTier(index) {
-    setForm((f) => {
-      if (f.defaultPrices.tiers.length <= 1) return f;
-      const tiers = f.defaultPrices.tiers.filter((_, i) => i !== index);
-      return { ...f, defaultPrices: { ...f.defaultPrices, tiers } };
-    });
-  }
-
-  async function handleSaveSettings() {
-    await app.saveSettings(form);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  }
 
   async function handleOpenSale() {
     if (!newSale.name.trim()) return;
@@ -1470,7 +1432,49 @@ function SettingsTab({ app }) {
           )}
         </div>
       </Card>
+    </div>
+  );
+}
 
+function SettingsTab({ app }) {
+  const [form, setForm] = useState(app.settings);
+  const [saved, setSaved] = useState(false);
+
+  function update(field, value) {
+    setForm((f) => ({ ...f, [field]: value }));
+  }
+
+  function updateTier(index, field, value) {
+    setForm((f) => {
+      const tiers = f.defaultPrices.tiers.map((t, i) => (i === index ? { ...t, [field]: Number(value) || 0 } : t));
+      return { ...f, defaultPrices: { ...f.defaultPrices, tiers } };
+    });
+  }
+
+  function addPriceTier() {
+    setForm((f) => {
+      const tiers = f.defaultPrices.tiers;
+      const lastMin = tiers.length ? Math.max(...tiers.map((t) => t.minQty)) : 0;
+      return { ...f, defaultPrices: { ...f.defaultPrices, tiers: [...tiers, { minQty: lastMin + 1, pricePerUnit: 0 }] } };
+    });
+  }
+
+  function removePriceTier(index) {
+    setForm((f) => {
+      if (f.defaultPrices.tiers.length <= 1) return f;
+      const tiers = f.defaultPrices.tiers.filter((_, i) => i !== index);
+      return { ...f, defaultPrices: { ...f.defaultPrices, tiers } };
+    });
+  }
+
+  async function handleSaveSettings() {
+    await app.saveSettings(form);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }
+
+  return (
+    <div className="space-y-6">
       <Card className="space-y-4 p-5">
         <h3 className="text-sm font-semibold text-stone-800">פרטי מוכר</h3>
         <Field label="שם המוכר">
@@ -1545,6 +1549,7 @@ function SettingsTab({ app }) {
     </div>
   );
 }
+
 
 /* ============================================================================
    ██  DEMO DATA — בלוק בדיקה בלבד  ██
