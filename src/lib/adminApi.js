@@ -44,3 +44,31 @@ export async function adminListSales() {
     prices: s.prices,
   }))
 }
+
+export async function adminCreateSale({ name, deadline, prices, stockEnabled, stockTotal, closeCurrent }) {
+  const { data, error } = await supabase.rpc('admin_create_sale', {
+    p_name: name,
+    p_deadline: deadline,
+    p_prices: prices,
+    p_stock_enabled: !!stockEnabled,
+    p_stock_total: stockTotal ?? null,
+    p_close_current: closeCurrent !== false,
+  })
+
+  if (error) throw error
+  const row = Array.isArray(data) ? data[0] : data
+  if (!row) throw new Error('admin_create_sale returned no row')
+
+  return {
+    id: row.id,
+    name: row.name,
+    openDate: row.open_date,
+    closeDate: row.close_date,
+    status: row.status,
+    stockEnabled: row.stock_enabled,
+    stockTotal: row.stock_total,
+    prices: row.prices,
+    orderSeq: row.order_seq,
+    deadline: row.deadline,
+  }
+}
