@@ -72,3 +72,43 @@ export async function adminCreateSale({ name, deadline, prices, stockEnabled, st
     deadline: row.deadline,
   }
 }
+
+// מזהי מכירה ישנים מה-DEMO/window.storage (כמו "demo-sale-2026-09") אינם
+// uuid תקין, ו-orders.sale_id הוא עמודת uuid - שליחת מזהה כזה ל-Supabase
+// תיכשל בשגיאת טיפוס. Guard פשוט: אם saleId לא נראה כמו uuid, מחזירים []
+// בבטחה בלי לפנות ל-Supabase בכלל (אין fallback ל-window.storage בכוונה).
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export async function adminGetOrders(saleId) {
+  if (!UUID_RE.test(saleId)) {
+    return []
+  }
+
+  const { data, error } = await supabase
+    .from('orders')
+    .select(
+      'id, order_number, first_name, last_name, phone, area, qty, amount, pricing_snapshot, payment_method, payment_status, order_status, notes, internal_note, created_at'
+    )
+    .eq('sale_id', saleId)
+    .order('created_at', { ascending: false })
+
+  if (error) throw error
+
+  return (data || []).map((o) => ({
+    id: o.id,
+    orderNumber: o.order_number,
+    firstName: o.first_name,
+    lastName: o.last_name,
+    phone: o.phone,
+    area: o.area,
+    qty: o.qty,
+    amount: o.amount,
+    pricingSnapshot: o.pricing_snapshot,
+    paymentMethod: o.payment_method,
+    paymentStatus: o.payment_status,
+    orderStatus: o.order_status,
+    notes: o.notes,
+    internalNote: o.internal_note,
+    createdAt: o.created_at,
+  }))
+}
