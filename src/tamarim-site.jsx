@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabaseClient';
+import { adminGetSettings } from './lib/adminApi';
 
 /* =========================================================================
    שכבת גישה לנתונים (Data Access Layer)
@@ -1482,8 +1483,27 @@ function SalesManagementTab({ app }) {
 }
 
 function SettingsTab({ app }) {
-  const [form, setForm] = useState(app.settings);
+  const [form, setForm] = useState(null);
+  const [loadError, setLoadError] = useState('');
   const [saved, setSaved] = useState(false);
+
+  // טעינה מבודדת ל-Admin בלבד, ישירות מ-Supabase. לא נוגעת ב-app.settings
+  // (עדיין מוזן מ-db.getSettings()/window.storage ומשמש את הצד הציבורי
+  // בדיוק כפי שהיה עד עכשיו).
+  useEffect(() => {
+    let active = true;
+    adminGetSettings()
+      .then((data) => {
+        if (active) setForm(data);
+      })
+      .catch((err) => {
+        console.error('adminGetSettings failed', err);
+        if (active) setLoadError('שגיאה בטעינת ההגדרות מ-Supabase: ' + (err?.message || 'שגיאה לא ידועה'));
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   function update(field, value) {
     setForm((f) => ({ ...f, [field]: value }));
@@ -1516,6 +1536,13 @@ function SettingsTab({ app }) {
     await app.saveSettings(form);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  }
+
+  if (loadError) {
+    return <Card className="p-6 text-center text-rose-700">{loadError}</Card>;
+  }
+  if (!form) {
+    return <Spinner />;
   }
 
   return (
