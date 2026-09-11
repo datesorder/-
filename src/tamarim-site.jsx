@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabaseClient';
 import { adminGetSettings, adminListSales } from './lib/adminApi';
+import { getOpenSale, createOrder } from './lib/publicApi';
 
 /* =========================================================================
    שכבת גישה לנתונים (Data Access Layer)
@@ -468,16 +469,42 @@ function Toast({ message }) {
 
 /* ============================== צד לקוח ================================ */
 
-function CustomerView({ settings, sale, orders, onSubmitOrder, onGoAdmin }) {
+function CustomerView({ settings, onSubmitOrder, onGoAdmin }) {
   const [step, setStep] = useState('form'); // 'form' | 'confirmation'
   const [lastOrder, setLastOrder] = useState(null);
   const [form, setForm] = useState({ firstName: '', lastName: '', phone: '', area: '', qty: 1, notes: '', paymentMethod: 'cash' });
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [sale, setSale] = useState(null);
+  const [saleLoading, setSaleLoading] = useState(true);
+  const [saleLoadError, setSaleLoadError] = useState('');
+
+  // המכירה הפתוחה מגיעה ישירות מ-Supabase (get_open_sale), לא מ-window.storage.
+  // זה מקור מבודד לגמרי מהצד הציבורי - לא נוגע ב-app.salesById/db.getSale
+  // שממשיכים לשרת את אזור הניהול בדיוק כפי שהיה.
+  useEffect(() => {
+    let active = true;
+    getOpenSale()
+      .then((data) => {
+        if (active) setSale(data);
+      })
+      .catch((err) => {
+        console.error('getOpenSale failed', err);
+        if (active) setSaleLoadError('אירעה שגיאה בטעינת המכירה. נסו לרענן את הדף.');
+      })
+      .finally(() => {
+        if (active) setSaleLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const activePrices = sale?.prices || settings.defaultPrices;
   const amount = calcAmount(activePrices, form.qty);
-  const stockRemaining = computeStockRemaining(sale, orders);
+  // stock_remaining כבר מחושב בצד השרת בתוך get_open_sale() - אין יותר
+  // תלות בהזמנות (getOrders) בצד הציבורי בשביל בדיקת המלאי.
+  const stockRemaining = sale?.stockEnabled ? sale.stockRemaining : null;
   const soldOut = sale?.stockEnabled && stockRemaining <= 0;
   const deadlinePassed = isDeadlinePassed(sale);
   const saleOpen = isSaleAcceptingOrders(sale) && !soldOut;
@@ -522,7 +549,7 @@ function CustomerView({ settings, sale, orders, onSubmitOrder, onGoAdmin }) {
     setError('');
     setSubmitting(true);
     try {
-      const order = await onSubmitOrder({ ...form, amount, markPaid });
+      const order = await onSubmitOrder({ ...form, amount, markPaid, sale });
       setLastOrder(order);
       setStep('confirmation');
       if (openPaymentAfter && paymentLink) {
@@ -606,28 +633,34 @@ function CustomerView({ settings, sale, orders, onSubmitOrder, onGoAdmin }) {
         )}
       </div>
 
-      {!sale && (
-        <Card className="mt-6 p-6 text-center text-stone-500">
-          אין כרגע מכירת תמרים פתוחה. אפשר לחזור בקרוב למועד המכירה הבא.
-          {settings.phone && <div className="mt-2 text-sm">לשאלות: {settings.phone}</div>}
-        </Card>
-      )}
+      {saleLoading ? (
+        <Spinner />
+      ) : saleLoadError ? (
+        <Card className="mt-6 p-6 text-center text-rose-700">{saleLoadError}</Card>
+      ) : (
+        <>
+          {!sale && (
+            <Card className="mt-6 p-6 text-center text-stone-500">
+              אין כרגע מכירת תמרים פתוחה. אפשר לחזור בקרוב למועד המכירה הבא.
+              {settings.phone && <div className="mt-2 text-sm">לשאלות: {settings.phone}</div>}
+            </Card>
+          )}
 
-      {sale && sale.status !== 'open' && !deadlinePassed && (
-        <Card className="mt-6 p-6 text-center text-stone-500">המכירה הנוכחית נסגרה להזמנות. תודה לכל מי שהזמין!</Card>
-      )}
+          {sale && sale.status !== 'open' && !deadlinePassed && (
+            <Card className="mt-6 p-6 text-center text-stone-500">המכירה הנוכחית נסגרה להזמנות. תודה לכל מי שהזמין!</Card>
+          )}
 
-      {sale && deadlinePassed && (
-        <Card className="mt-6 p-6 text-center text-stone-500">
-          המועד האחרון להזמנה ({fmtDeadline(sale.deadline)}) עבר, והמכירה נסגרה. תודה לכל מי שהזמין!
-        </Card>
-      )}
+          {sale && deadlinePassed && (
+            <Card className="mt-6 p-6 text-center text-stone-500">
+              המועד האחרון להזמנה ({fmtDeadline(sale.deadline)}) עבר, והמכירה נסגרה. תודה לכל מי שהזמין!
+            </Card>
+          )}
 
-      {sale && sale.status === 'open' && !deadlinePassed && soldOut && (
-        <Card className="mt-6 p-6 text-center text-stone-500">המכירה אזלה — כל האריזות נמכרו. תודה על העניין!</Card>
-      )}
+          {sale && sale.status === 'open' && !deadlinePassed && soldOut && (
+            <Card className="mt-6 p-6 text-center text-stone-500">המכירה אזלה — כל האריזות נמכרו. תודה על העניין!</Card>
+          )}
 
-      {saleOpen && (
+          {saleOpen && (
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">
           <Card className="space-y-4 p-5">
             <div className="grid grid-cols-2 gap-3">
@@ -741,6 +774,8 @@ function CustomerView({ settings, sale, orders, onSubmitOrder, onGoAdmin }) {
             )}
           </Card>
         </form>
+          )}
+        </>
       )}
 
       <button onClick={onGoAdmin} className="mx-auto mt-10 block text-xs text-stone-300 hover:text-stone-400">
@@ -1878,84 +1913,42 @@ export default function App() {
     return orders;
   }, []);
 
-  // TODO(Supabase): this whole function becomes one call —
-  // `supabase.rpc('create_order', { p_sale_id, p_first_name, ... })` —
-  // to the SECURITY DEFINER function in 0003_functions.sql. It is written
-  // here with the same validation order (sale open? qty valid? stock left?
-  // recompute amount from the sale's frozen prices — never trust the
-  // client — then upsert customer, then insert order) so the swap is
-  // mechanical rather than a redesign.
-  const submitOrder = useCallback(
-    async (formData) => {
-      const sale = salesById[currentSaleId];
-      // בדיקה סמכותית, לא רק תצוגתית: גם אם הטאב נשאר פתוח מעבר לדדליין,
-      // השליחה בפועל תמיד נבדקת מחדש כאן ברגע הלחיצה.
-      if (!isSaleAcceptingOrders(sale)) {
-        throw new Error('SALE_CLOSED');
-      }
-      const orders = ordersBySaleId[currentSaleId] || [];
-      const prices = sale.prices || settings.defaultPrices;
-      const qty = Number(formData.qty);
-      const amount = calcAmount(prices, qty); // מחושב מחדש בצד שלנו, לא נלקח מהלקוח
-      const seq = (sale.orderSeq || 0) + 1;
-      const phone = formData.phone.trim();
-
-      const order = {
-        id: uid('ord_'),
-        orderNumber: `#${String(seq).padStart(3, '0')}`,
-        saleId: currentSaleId,
-        createdAt: new Date().toISOString(),
-        firstName: formData.firstName.trim(),
-        lastName: formData.lastName.trim(),
-        phone,
-        area: formData.area?.trim() || '',
-        qty,
-        amount,
-        pricingSnapshot: prices,
-        paymentMethod: formData.paymentMethod,
-        paymentStatus: formData.markPaid ? 'paid' : 'pending',
-        orderStatus: 'pending_pickup',
-        notes: formData.notes?.trim() || '',
-        internalNote: '',
-      };
-      const nextOrders = [...orders, order];
-      const nextSale = { ...sale, orderSeq: seq };
-      await db.saveOrders(currentSaleId, nextOrders);
-      await db.saveSale(nextSale);
-
-      // לקוחות חוזרים — זיהוי לפי טלפון, בלי מערכת CRM.
-      // עטוף בנפרד ובכוונה: כשלון כאן לעולם לא אמור למנוע הזמנה תקינה
-      // מלהיווצר או מהלקוח לראות מסך אישור.
-      try {
-        const existingCustomer = await db.getCustomer(phone);
-        const customer = existingCustomer
-          ? {
-              ...existingCustomer,
-              firstName: order.firstName,
-              lastName: order.lastName,
-              area: order.area || existingCustomer.area,
-              totalOrders: (existingCustomer.totalOrders || 0) + 1,
-              totalPackages: (existingCustomer.totalPackages || 0) + qty,
-            }
-          : {
-              phone,
-              firstName: order.firstName,
-              lastName: order.lastName,
-              area: order.area,
-              totalOrders: 1,
-              totalPackages: qty,
-            };
-        await db.saveCustomer(customer);
-      } catch (customerErr) {
-        console.warn('customer upsert failed (order was still created successfully):', customerErr);
-      }
-
-      setOrdersBySaleId((m) => ({ ...m, [currentSaleId]: nextOrders }));
-      setSalesById((m) => ({ ...m, [currentSaleId]: nextSale }));
-      return order;
-    },
-    [salesById, ordersBySaleId, currentSaleId, settings.defaultPrices]
-  );
+  // הצד הציבורי: יצירת הזמנה עוברת עכשיו דרך create_order() ב-Supabase
+  // (RPC), לא דרך window.storage. sale מגיע מה-formData (נטען ב-CustomerView
+  // עצמו דרך get_open_sale()) - לא מ-salesById/currentSaleId המשותפים, כדי
+  // לא לערבב בין המכירה האמיתית (Supabase) לבין הצד שעדיין משמש את Admin.
+  const submitOrder = useCallback(async (formData) => {
+    const sale = formData.sale;
+    // בדיקה סמכותית מקומית, לא רק תצוגתית: גם אם הטאב נשאר פתוח מעבר
+    // לדדליין, השליחה בפועל תמיד נבדקת מחדש כאן ברגע הלחיצה. הבדיקה
+    // הסופית והאמיתית היא בכל זאת בתוך create_order() עצמה בשרת.
+    if (!isSaleAcceptingOrders(sale)) {
+      throw new Error('SALE_CLOSED');
+    }
+    const order = await createOrder({
+      saleId: sale.id,
+      firstName: formData.firstName.trim(),
+      lastName: formData.lastName.trim(),
+      phone: formData.phone.trim(),
+      area: formData.area?.trim() || '',
+      qty: Number(formData.qty),
+      notes: formData.notes?.trim() || '',
+      paymentMethod: formData.paymentMethod,
+      markPaid: !!formData.markPaid,
+    });
+    // מסך האישור הקיים צריך firstName/lastName/qty בנוסף למה שה-RPC מחזיר
+    // (id/orderNumber/amount/paymentMethod) - אלה כבר ידועים מקומית מהטופס,
+    // אין צורך שה-RPC יחזיר אותם בחזרה.
+    return {
+      id: order.id,
+      orderNumber: order.orderNumber,
+      amount: order.amount,
+      paymentMethod: order.paymentMethod,
+      firstName: formData.firstName.trim(),
+      lastName: formData.lastName.trim(),
+      qty: Number(formData.qty),
+    };
+  }, []);
 
   const updateOrder = useCallback(
     async (saleId, orderId, patch) => {
@@ -2077,8 +2070,6 @@ export default function App() {
       ) : view === 'customer' ? (
         <CustomerView
           settings={settings}
-          sale={currentSaleId ? salesById[currentSaleId] : null}
-          orders={currentSaleId ? ordersBySaleId[currentSaleId] || [] : []}
           onSubmitOrder={submitOrder}
           onGoAdmin={() => setView('admin-gate')}
         />
