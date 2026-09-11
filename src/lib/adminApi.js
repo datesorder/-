@@ -26,3 +26,21 @@ export async function adminGetSettings() {
     defaultPrices: data.default_prices,
   }
 }
+
+export async function adminListSales() {
+  const { data, error } = await supabase
+    .from('sales')
+    .select('id, name, stock_enabled, stock_total, prices')
+    .order('open_date', { ascending: false })
+    .limit(4)
+
+  if (error) throw error
+
+  return data.map((s) => ({
+    id: s.id,
+    name: s.name,
+    stockEnabled: s.stock_enabled,
+    stockTotal: s.stock_total,
+    prices: s.prices,
+  }))
+}
