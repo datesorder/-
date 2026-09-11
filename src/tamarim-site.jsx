@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import * as XLSX from 'xlsx';
+import { supabase } from './lib/supabaseClient';
 
 /* =========================================================================
    שכבת גישה לנתונים (Data Access Layer)
@@ -750,18 +751,62 @@ function CustomerView({ settings, sale, orders, onSubmitOrder, onGoAdmin }) {
 
 /* ============================ שער כניסה למנהל ============================ */
 
-function AdminGate({ onEnter, onBack }) {
+function AdminGate({ onBack }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  async function handleLogin(e) {
+    e.preventDefault();
+    if (loading) return;
+    setError('');
+    setLoading(true);
+    try {
+      const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
+      if (authError) {
+        setError('אימייל או סיסמה שגויים. נסו שוב.');
+      }
+      // בהצלחה: מאזין ה-onAuthStateChange באפליקציה יקלוט את ה-session
+      // ויעביר אוטומטית למסך הניהול - אין צורך לנווט כאן.
+    } catch (err) {
+      console.error('login failed', err);
+      setError('אירעה שגיאה בהתחברות. נסו שוב.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="mx-auto flex min-h-[70vh] max-w-md flex-col items-center justify-center px-4 text-center">
       <Card className="w-full p-6">
         <h2 className="tmr-display text-xl font-bold text-stone-800">כניסה לניהול</h2>
-        <p className="mt-3 rounded-lg bg-amber-50 p-3 text-xs leading-relaxed text-amber-900">
-          ⚠️ מסך זה זמני ואין בו שום בדיקת סיסמה — במתכוון, כדי לא ליצור מראית עין של הגנה שלא קיימת. לאחר חיבור Supabase
-          Authentication (ראו הוראות ההרצה) המסך הזה יוחלף בכניסה אמיתית עם אימייל וסיסמה, ורק משתמש שרשום כמנהל יוכל להיכנס.
-        </p>
-        <Button className="mt-5 w-full" onClick={onEnter}>
-          כניסה לאזור הניהול
-        </Button>
+        <form onSubmit={handleLogin} className="mt-5 space-y-4 text-right">
+          <Field label="אימייל">
+            <input
+              type="email"
+              required
+              autoComplete="username"
+              className={inputCls}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </Field>
+          <Field label="סיסמה">
+            <input
+              type="password"
+              required
+              autoComplete="current-password"
+              className={inputCls}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </Field>
+          {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800">{error}</p>}
+          <Button type="submit" className="w-full" disabled={loading}>
+            {loading ? 'מתחבר…' : 'כניסה'}
+          </Button>
+        </form>
         <Button variant="ghost" className="mt-2 w-full" onClick={onBack}>
           חזרה לאתר הלקוחות
         </Button>
@@ -1694,11 +1739,42 @@ export default function App() {
   const [currentSaleId, setCurrentSaleId] = useState(null);
   const [view, setView] = useState('customer'); // 'customer' | 'admin-gate' | 'admin'
   const [toast, setToast] = useState('');
+  const [session, setSession] = useState(null); // Supabase Auth session - null = not logged in
 
   function notify(msg) {
     setToast(msg);
     setTimeout(() => setToast(''), 2500);
   }
+
+  // מעקב Session אמיתי אחרי Supabase Auth - Effect נפרד ובלתי-תלוי לגמרי
+  // מה-Effect שטוען את נתוני האתר הציבורי (DEMO_MODE/window.storage) למטה,
+  // כדי שכשל כלשהו כאן לעולם לא יחסום את טעינת האתר הציבורי. session הוא
+  // מקור האמת היחיד לגישת ניהול - לא view - כי view הוא רק ניווט UI.
+  useEffect(() => {
+    let active = true;
+    supabase.auth
+      .getSession()
+      .then(({ data }) => {
+        if (active) setSession(data.session);
+      })
+      .catch((err) => {
+        console.error('auth getSession failed', err);
+      });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      if (active) setSession(newSession);
+    });
+    return () => {
+      active = false;
+      listener?.subscription?.unsubscribe();
+    };
+  }, []);
+
+  // מעבר אוטומטי למסך הניהול ברגע שיש session תקין (אחרי login מוצלח)
+  useEffect(() => {
+    if (session && view === 'admin-gate') {
+      setView('admin');
+    }
+  }, [session, view]);
 
   useEffect(() => {
     (async () => {
@@ -1934,7 +2010,14 @@ export default function App() {
     createSale,
     closeSale,
     debugForceDeadlinePassed,
-    exitAdmin: () => setView('customer'),
+    exitAdmin: async () => {
+      try {
+        await supabase.auth.signOut();
+      } catch (err) {
+        console.error('sign out failed', err);
+      }
+      setView('customer');
+    },
   };
 
   return (
@@ -1951,10 +2034,13 @@ export default function App() {
           onSubmitOrder={submitOrder}
           onGoAdmin={() => setView('admin-gate')}
         />
-      ) : view === 'admin-gate' ? (
-        <AdminGate onEnter={() => setView('admin')} onBack={() => setView('customer')} />
-      ) : (
+      ) : view === 'admin' && session ? (
         <AdminView app={app} />
+      ) : (
+        // גם view === 'admin-gate', וגם מקרה קצה שבו view === 'admin' אבל
+        // אין session תקין (למשל אחרי logout ממקום אחר) - תמיד חזרה למסך
+        // התחברות אמיתי, לא לתצוגת הניהול.
+        <AdminGate onBack={() => setView('customer')} />
       )}
       <Toast message={toast} />
     </div>
