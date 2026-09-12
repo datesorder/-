@@ -115,3 +115,23 @@ export async function adminGetOrders(saleId) {
     createdAt: o.created_at,
   }))
 }
+
+export async function adminGetCustomer(phone) {
+  const { data, error } = await supabase
+    .from('customers')
+    .select('phone, first_name, last_name, area, total_orders, total_packages')
+    .eq('phone', phone)
+    .maybeSingle()
+
+  if (error) throw error
+  if (!data) return null
+
+  return {
+    phone: data.phone,
+    firstName: data.first_name,
+    lastName: data.last_name,
+    area: data.area,
+    totalOrders: data.total_orders,
+    totalPackages: data.total_packages,
+  }
+}
