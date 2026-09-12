@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabaseClient';
-import { adminGetSettings, adminListSales, adminCreateSale, adminGetOrders, adminGetCustomer } from './lib/adminApi';
+import { adminGetSettings, adminListSales, adminCreateSale, adminGetOrders, adminGetCustomer, adminUpdateOrder, adminBulkUpdateOrders } from './lib/adminApi';
 import { getOpenSale, createOrder } from './lib/publicApi';
 
 /* =========================================================================
@@ -1975,7 +1975,7 @@ export default function App() {
     async (saleId, orderId, patch) => {
       const orders = ordersBySaleId[saleId] || (await loadOrdersForSale(saleId));
       const next = orders.map((o) => (o.id === orderId ? { ...o, ...patch } : o));
-      await db.saveOrders(saleId, next);
+      await adminUpdateOrder(orderId, patch);
       setOrdersBySaleId((m) => ({ ...m, [saleId]: next }));
       notify('ההזמנה עודכנה');
     },
@@ -1987,7 +1987,7 @@ export default function App() {
       const orders = ordersBySaleId[saleId] || (await loadOrdersForSale(saleId));
       const idSet = new Set(orderIds);
       const next = orders.map((o) => (idSet.has(o.id) ? { ...o, ...patch } : o));
-      await db.saveOrders(saleId, next);
+      await adminBulkUpdateOrders(orderIds, patch);
       setOrdersBySaleId((m) => ({ ...m, [saleId]: next }));
       notify('ההזמנות עודכנו');
     },
