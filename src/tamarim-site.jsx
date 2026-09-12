@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabaseClient';
-import { adminGetSettings, adminListSales, adminCreateSale, adminGetOrders, adminGetCustomer, adminUpdateOrder, adminBulkUpdateOrders } from './lib/adminApi';
+import { adminGetSettings, adminListSales, adminCreateSale, adminGetOrders, adminGetCustomer, adminUpdateOrder, adminBulkUpdateOrders, adminCloseSale } from './lib/adminApi';
 import { getOpenSale, createOrder } from './lib/publicApi';
 
 /* =========================================================================
@@ -2032,7 +2032,7 @@ export default function App() {
   const closeSale = useCallback(
     async (saleId) => {
       const sale = { ...salesById[saleId], status: 'closed', closeDate: new Date().toISOString() };
-      await db.saveSale(sale);
+      await adminCloseSale(saleId);
       setSalesById((m) => ({ ...m, [saleId]: sale }));
       if (saleId === currentSaleId) setCurrentSaleId(null);
       notify('המכירה נסגרה');
