@@ -187,3 +187,12 @@ export async function adminBulkUpdateOrders(orderIds, patch) {
 
   if (error) throw error
 }
+
+export async function adminCloseSale(saleId) {
+  const { error } = await supabase
+    .from('sales')
+    .update({ status: 'closed', close_date: new Date().toISOString() })
+    .eq('id', saleId)
+
+  if (error) throw error
+}
