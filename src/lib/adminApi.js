@@ -30,7 +30,7 @@ export async function adminGetSettings() {
 export async function adminListSales() {
   const { data, error } = await supabase
     .from('sales')
-    .select('id, name, stock_enabled, stock_total, prices')
+    .select('id, name, status, open_date, deadline, stock_enabled, stock_total, prices')
     .order('open_date', { ascending: false })
     .limit(4)
 
@@ -39,6 +39,9 @@ export async function adminListSales() {
   return data.map((s) => ({
     id: s.id,
     name: s.name,
+    status: s.status,
+    openDate: s.open_date,
+    deadline: s.deadline,
     stockEnabled: s.stock_enabled,
     stockTotal: s.stock_total,
     prices: s.prices,
