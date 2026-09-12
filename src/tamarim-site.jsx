@@ -990,7 +990,7 @@ function OrdersTab({ app, saleId, initialPreset, readOnlyBanner }) {
   const orders = saleId ? app.ordersBySaleId[saleId] || [] : [];
 
   useEffect(() => {
-    if (saleId && !app.ordersBySaleId[saleId]) {
+    if (saleId && !app.loadedSaleIds.has(saleId)) {
       setLoadingOrders(true);
       app.loadOrdersForSale(saleId).then(() => setLoadingOrders(false));
     }
@@ -1302,7 +1302,7 @@ function HistoryTab({ app }) {
       const list = [];
       for (const id of app.salesIndex) {
         const sale = app.salesById[id];
-        const orders = app.ordersBySaleId[id] || (await app.loadOrdersForSale(id));
+        const orders = app.loadedSaleIds.has(id) ? app.ordersBySaleId[id] : (await app.loadOrdersForSale(id));
         const active = (orders || []).filter((o) => o.orderStatus !== 'cancelled');
         list.push({
           id,
@@ -1819,6 +1819,7 @@ export default function App() {
   const [salesIndex, setSalesIndex] = useState([]);
   const [salesById, setSalesById] = useState({});
   const [ordersBySaleId, setOrdersBySaleId] = useState({});
+  const [loadedSaleIds, setLoadedSaleIds] = useState(() => new Set());
   const [currentSaleId, setCurrentSaleId] = useState(null);
   const [view, setView] = useState('customer'); // 'customer' | 'admin-gate' | 'admin'
   const [toast, setToast] = useState('');
@@ -1898,11 +1899,30 @@ export default function App() {
       const ordersMap = {};
       if (openId) ordersMap[openId] = await db.getOrders(openId);
 
+      // עדיפות למכירה אמיתית מ-Supabase, אם קיימת - בלי לגעת ברזולוציה
+      // הקיימת מ-window.storage/DEMO שלמעלה, שממשיכה לשמש כברירת מחדל/
+      // fallback אם אין מכירה פתוחה אמיתית ב-Supabase או שהבדיקה נכשלה.
+      let finalOpenId = openId;
+      let finalById = byId;
+      let finalOrdersMap = ordersMap;
+      try {
+        const supabaseSales = await adminListSales();
+        const openSupabaseSale = supabaseSales.find((sale) => sale.status === 'open');
+        if (openSupabaseSale) {
+          finalOpenId = openSupabaseSale.id;
+          finalById = { ...byId, [openSupabaseSale.id]: openSupabaseSale };
+          finalOrdersMap = { ...ordersMap, [openSupabaseSale.id]: await adminGetOrders(openSupabaseSale.id) };
+        }
+      } catch (err) {
+        console.warn('adminListSales check failed, staying with window.storage sale', err);
+      }
+
       setSettings(s);
       setSalesIndex(index);
-      setSalesById(byId);
-      setCurrentSaleId(openId);
-      setOrdersBySaleId(ordersMap);
+      setSalesById(finalById);
+      setCurrentSaleId(finalOpenId);
+      setOrdersBySaleId(finalOrdersMap);
+      setLoadedSaleIds(new Set(finalOpenId ? [finalOpenId] : []));
       setLoading(false);
     })();
   }, []);
@@ -1910,6 +1930,7 @@ export default function App() {
   const loadOrdersForSale = useCallback(async (saleId) => {
     const orders = await adminGetOrders(saleId);
     setOrdersBySaleId((m) => ({ ...m, [saleId]: orders }));
+    setLoadedSaleIds((s) => new Set(s).add(saleId));
     return orders;
   }, []);
 
@@ -2002,7 +2023,6 @@ export default function App() {
       const nextIndex = [sale.id, ...salesIndex];
       setSalesIndex(nextIndex);
       setSalesById((m) => ({ ...m, [sale.id]: sale }));
-      setOrdersBySaleId((m) => ({ ...m, [sale.id]: [] }));
       setCurrentSaleId(sale.id);
       notify('המכירה נפתחה');
     },
@@ -2040,6 +2060,7 @@ export default function App() {
     salesIndex,
     salesById,
     ordersBySaleId,
+    loadedSaleIds,
     currentSaleId,
     loadOrdersForSale,
     updateOrder,
