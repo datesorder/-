@@ -135,3 +135,55 @@ export async function adminGetCustomer(phone) {
     totalPackages: data.total_packages,
   }
 }
+
+// Whitelist מדויקת של השדות היחידים שמותר לעדכן דרך adminUpdateOrder/
+// adminBulkUpdateOrders. id, order_number, sale_id, created_at,
+// pricing_snapshot ו-notes אינם ניתנים לעדכון דרך הפונקציות האלה בכוונה.
+const ORDER_UPDATABLE_FIELDS = {
+  firstName: 'first_name',
+  lastName: 'last_name',
+  phone: 'phone',
+  area: 'area',
+  qty: 'qty',
+  amount: 'amount',
+  paymentMethod: 'payment_method',
+  paymentStatus: 'payment_status',
+  orderStatus: 'order_status',
+  internalNote: 'internal_note',
+}
+
+function buildOrderPatch(patch) {
+  const dbPatch = {}
+  for (const [camelKey, snakeKey] of Object.entries(ORDER_UPDATABLE_FIELDS)) {
+    if (Object.prototype.hasOwnProperty.call(patch, camelKey)) {
+      dbPatch[snakeKey] = patch[camelKey]
+    }
+  }
+  return dbPatch
+}
+
+export async function adminUpdateOrder(orderId, patch) {
+  const dbPatch = buildOrderPatch(patch)
+  if (Object.keys(dbPatch).length === 0) {
+    throw new Error('adminUpdateOrder: no whitelisted fields to update')
+  }
+
+  const { error } = await supabase.from('orders').update(dbPatch).eq('id', orderId)
+
+  if (error) throw error
+}
+
+export async function adminBulkUpdateOrders(orderIds, patch) {
+  if (!orderIds || orderIds.length === 0) {
+    return
+  }
+
+  const dbPatch = buildOrderPatch(patch)
+  if (Object.keys(dbPatch).length === 0) {
+    throw new Error('adminBulkUpdateOrders: no whitelisted fields to update')
+  }
+
+  const { error } = await supabase.from('orders').update(dbPatch).in('id', orderIds)
+
+  if (error) throw error
+}
