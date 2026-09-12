@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabaseClient';
-import { adminGetSettings, adminListSales, adminCreateSale, adminGetOrders } from './lib/adminApi';
+import { adminGetSettings, adminListSales, adminCreateSale, adminGetOrders, adminGetCustomer } from './lib/adminApi';
 import { getOpenSale, createOrder } from './lib/publicApi';
 
 /* =========================================================================
@@ -1147,7 +1147,7 @@ function OrderDetailModal({ app, saleId, order, onClose }) {
 
   useEffect(() => {
     let active = true;
-    db.getCustomer(order.phone).then((c) => {
+    adminGetCustomer(order.phone).then((c) => {
       if (active) setCustomerInfo(c);
     });
     return () => {
