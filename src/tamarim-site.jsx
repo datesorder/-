@@ -1932,6 +1932,15 @@ export default function App() {
           // כשל בטעינת ה-orders לא אמור לבטל את המכירה שכבר הוצגה בהצלחה.
           console.warn('adminGetOrders failed after showing the open sale', ordersErr);
         }
+      } else {
+        // Supabase ענתה בהצלחה (בלי error) שאין אף מכירה עם status='open' -
+        // זו תשובה אמינה, לא כשל. מאפסים את currentSaleId כדי לא להמשיך
+        // "לתקוע" מכירה ישנה מ-window.storage כאילו היא עדיין המכירה
+        // הנוכחית. salesById/ordersBySaleId לא נוקים - DashboardTab/
+        // OrdersTab/SalesManagementTab כולם בודקים קודם currentSaleId,
+        // אז null מספיק כדי שכולם יגיעו נכון למצב "אין מכירה פתוחה".
+        setCurrentSaleId(null);
+        supabaseSaleAppliedRef.current = true;
       }
     } catch (err) {
       console.warn('adminListSales check failed, staying with window.storage sale', err);
