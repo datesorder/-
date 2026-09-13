@@ -1884,7 +1884,6 @@ function DemoBanner() {
 
 export default function App() {
   const [loading, setLoading] = useState(true);
-  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [salesIndex, setSalesIndex] = useState([]);
   const [salesById, setSalesById] = useState({});
   const [ordersBySaleId, setOrdersBySaleId] = useState({});
@@ -2002,11 +2001,6 @@ export default function App() {
           await seedDemoData();
         }
       }
-      let s = await db.getSettings();
-      if (!s) {
-        s = DEFAULT_SETTINGS;
-        await db.saveSettings(s);
-      }
       const index = await db.listSaleIds();
       const byId = {};
       for (const id of index) {
@@ -2030,7 +2024,6 @@ export default function App() {
       const ordersMap = {};
       if (openId) ordersMap[openId] = await db.getOrders(openId);
 
-      setSettings(s);
       setSalesIndex(index);
       setSalesById(byId);
       setCurrentSaleId(openId);
@@ -2117,7 +2110,6 @@ export default function App() {
 
   const saveSettings = useCallback(async (newSettings) => {
     await adminSaveSettings(newSettings);
-    setSettings(newSettings);
   }, []);
 
   const createSale = useCallback(
@@ -2185,7 +2177,6 @@ export default function App() {
   );
 
   const app = {
-    settings,
     salesIndex,
     salesById,
     setSalesById,
