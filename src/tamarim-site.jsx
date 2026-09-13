@@ -1825,10 +1825,42 @@ export default function App() {
   const [toast, setToast] = useState('');
   const [session, setSession] = useState(null); // Supabase Auth session - null = not logged in
 
+  // דגלים למניעת טעינה כפולה/מקבילה של בדיקת המכירה הפתוחה מ-Supabase -
+  // היא עשויה לרוץ גם מה-bootstrap (unauthenticated, עלול להיכשל בשקט)
+  // וגם מ-Effect נפרד שמופעל ברגע שיש session תקין (ר' למטה).
+  const supabaseSaleAppliedRef = useRef(false);
+  const supabaseSaleInFlightRef = useRef(false);
+
   function notify(msg) {
     setToast(msg);
     setTimeout(() => setToast(''), 2500);
   }
+
+  // בודקת אם קיימת מכירה פתוחה אמיתית ב-Supabase, ואם כן - מחליפה בה את
+  // salesById/currentSaleId/ordersBySaleId המקומיים (שמקורם ב-window.storage/
+  // demo). מיושמת פעם אחת בלבד בזכות ה-ref: אם כבר נמצאה/הוחלה בעבר (למשל
+  // ע"י ה-bootstrap, כשכבר יש session תקף מרענון קודם), קריאה נוספת (למשל
+  // מיד אחרי login) היא no-op ולא יוצרת טעינה כפולה.
+  const applySupabaseOpenSale = useCallback(async () => {
+    if (supabaseSaleAppliedRef.current || supabaseSaleInFlightRef.current) return;
+    supabaseSaleInFlightRef.current = true;
+    try {
+      const supabaseSales = await adminListSales();
+      const openSupabaseSale = supabaseSales.find((sale) => sale.status === 'open');
+      if (openSupabaseSale) {
+        const orders = await adminGetOrders(openSupabaseSale.id);
+        setSalesById((m) => ({ ...m, [openSupabaseSale.id]: openSupabaseSale }));
+        setOrdersBySaleId((m) => ({ ...m, [openSupabaseSale.id]: orders }));
+        setCurrentSaleId(openSupabaseSale.id);
+        setLoadedSaleIds((s) => new Set(s).add(openSupabaseSale.id));
+        supabaseSaleAppliedRef.current = true;
+      }
+    } catch (err) {
+      console.warn('adminListSales check failed, staying with window.storage sale', err);
+    } finally {
+      supabaseSaleInFlightRef.current = false;
+    }
+  }, []);
 
   // מעקב Session אמיתי אחרי Supabase Auth - Effect נפרד ובלתי-תלוי לגמרי
   // מה-Effect שטוען את נתוני האתר הציבורי (DEMO_MODE/window.storage) למטה,
@@ -1859,6 +1891,18 @@ export default function App() {
       setView('admin');
     }
   }, [session, view]);
+
+  // בכניסה ראשונה (login טרי), ה-bootstrap שלמטה עלול לנסות לבדוק את
+  // Supabase לפני שיש session תקף בכלל (ולכן נכשל בשקט ונשאר על ברירת
+  // המחדל מ-window.storage). ברגע שה-session הופך זמין (מיד אחרי login),
+  // מנסים שוב - applySupabaseOpenSale כבר מוגנת מפני ריצה כפולה, כך שאם
+  // ה-bootstrap כבר הצליח בעצמו (למשל ברענון עם session קיים), זו קריאה
+  // חסרת אפקט (no-op).
+  useEffect(() => {
+    if (session) {
+      applySupabaseOpenSale();
+    }
+  }, [session, applySupabaseOpenSale]);
 
   useEffect(() => {
     (async () => {
@@ -1899,30 +1943,20 @@ export default function App() {
       const ordersMap = {};
       if (openId) ordersMap[openId] = await db.getOrders(openId);
 
-      // עדיפות למכירה אמיתית מ-Supabase, אם קיימת - בלי לגעת ברזולוציה
-      // הקיימת מ-window.storage/DEMO שלמעלה, שממשיכה לשמש כברירת מחדל/
-      // fallback אם אין מכירה פתוחה אמיתית ב-Supabase או שהבדיקה נכשלה.
-      let finalOpenId = openId;
-      let finalById = byId;
-      let finalOrdersMap = ordersMap;
-      try {
-        const supabaseSales = await adminListSales();
-        const openSupabaseSale = supabaseSales.find((sale) => sale.status === 'open');
-        if (openSupabaseSale) {
-          finalOpenId = openSupabaseSale.id;
-          finalById = { ...byId, [openSupabaseSale.id]: openSupabaseSale };
-          finalOrdersMap = { ...ordersMap, [openSupabaseSale.id]: await adminGetOrders(openSupabaseSale.id) };
-        }
-      } catch (err) {
-        console.warn('adminListSales check failed, staying with window.storage sale', err);
-      }
-
       setSettings(s);
       setSalesIndex(index);
-      setSalesById(finalById);
-      setCurrentSaleId(finalOpenId);
-      setOrdersBySaleId(finalOrdersMap);
-      setLoadedSaleIds(new Set(finalOpenId ? [finalOpenId] : []));
+      setSalesById(byId);
+      setCurrentSaleId(openId);
+      setOrdersBySaleId(ordersMap);
+      setLoadedSaleIds(new Set(openId ? [openId] : []));
+
+      // עדיפות למכירה אמיתית מ-Supabase, אם קיימת - מוחלת (אם נמצאה) על
+      // גבי מה שנקבע כרגע מ-window.storage/DEMO. אם זה נכשל כרגע (למשל
+      // בכניסה ראשונה, לפני שיש session תקף עדיין) - ה-Effect הנפרד
+      // שמאזין ל-session ינסה שוב אוטומטית ברגע שההתחברות תסתיים;
+      // applySupabaseOpenSale מוגנת בעצמה מפני הרצה כפולה/מקבילה.
+      await applySupabaseOpenSale();
+
       setLoading(false);
     })();
   }, []);
