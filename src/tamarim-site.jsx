@@ -1848,12 +1848,21 @@ export default function App() {
       const supabaseSales = await adminListSales();
       const openSupabaseSale = supabaseSales.find((sale) => sale.status === 'open');
       if (openSupabaseSale) {
-        const orders = await adminGetOrders(openSupabaseSale.id);
+        // מציגים את המכירה מיד ברגע שהיא נמצאה - בלי לחכות לטעינת ה-orders
+        // שלה, כדי לא לעכב את הופעתה. ה-orders עדיין נטענים מיד אחרי (לא
+        // הוסרה הקריאה), רק לא חוסמים בהם את הופעת המכירה עצמה.
         setSalesById((m) => ({ ...m, [openSupabaseSale.id]: openSupabaseSale }));
-        setOrdersBySaleId((m) => ({ ...m, [openSupabaseSale.id]: orders }));
         setCurrentSaleId(openSupabaseSale.id);
         setLoadedSaleIds((s) => new Set(s).add(openSupabaseSale.id));
         supabaseSaleAppliedRef.current = true;
+
+        try {
+          const orders = await adminGetOrders(openSupabaseSale.id);
+          setOrdersBySaleId((m) => ({ ...m, [openSupabaseSale.id]: orders }));
+        } catch (ordersErr) {
+          // כשל בטעינת ה-orders לא אמור לבטל את המכירה שכבר הוצגה בהצלחה.
+          console.warn('adminGetOrders failed after showing the open sale', ordersErr);
+        }
       }
     } catch (err) {
       console.warn('adminListSales check failed, staying with window.storage sale', err);
