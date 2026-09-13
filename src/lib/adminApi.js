@@ -45,12 +45,17 @@ export async function adminSaveSettings(settings) {
   if (error) throw error
 }
 
-export async function adminListSales() {
-  const { data, error } = await supabase
+export async function adminListSales({ limit = 4 } = {}) {
+  let query = supabase
     .from('sales')
     .select('id, name, status, open_date, deadline, stock_enabled, stock_total, prices')
     .order('open_date', { ascending: false })
-    .limit(4)
+
+  if (limit) {
+    query = query.limit(limit)
+  }
+
+  const { data, error } = await query
 
   if (error) throw error
 
