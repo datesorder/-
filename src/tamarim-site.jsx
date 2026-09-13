@@ -469,7 +469,7 @@ function Toast({ message }) {
 
 /* ============================== צד לקוח ================================ */
 
-function CustomerView({ settings, onSubmitOrder, onGoAdmin }) {
+function CustomerView({ onSubmitOrder, onGoAdmin }) {
   const [step, setStep] = useState('form'); // 'form' | 'confirmation'
   const [lastOrder, setLastOrder] = useState(null);
   const [form, setForm] = useState({ firstName: '', lastName: '', phone: '', area: '', qty: 1, notes: '', paymentMethod: 'cash' });
@@ -526,7 +526,7 @@ function CustomerView({ settings, onSubmitOrder, onGoAdmin }) {
     };
   }, []);
 
-  const activePrices = sale?.prices || settings.defaultPrices;
+  const activePrices = sale?.prices;
   const amount = calcAmount(activePrices, form.qty);
   // stock_remaining כבר מחושב בצד השרת בתוך get_open_sale() - אין יותר
   // תלות בהזמנות (getOrders) בצד הציבורי בשביל בדיקת המלאי.
@@ -2129,8 +2129,16 @@ export default function App() {
       }
       // עותק קבוע של המחירים בזמן פתיחת המכירה - זו הפעולה המקבילה ל-
       // "sale.prices := settings.default_prices" שכבר קיימת בפועל בתוך
-      // admin_create_sale() בצד השרת.
-      const finalPrices = prices ? { ...prices } : { ...settings.defaultPrices };
+      // admin_create_sale() בצד השרת. כשלא מועברים prices מפורשים (מכירה
+      // חדשה שאינה שכפול), נטענת ברירת המחדל ישירות מ-Supabase - lazy,
+      // רק ברגע הזה, בלי לגעת ב-App.settings (window.storage) בכלל.
+      let finalPrices;
+      if (prices) {
+        finalPrices = { ...prices };
+      } else {
+        const settingsFromSupabase = await adminGetSettings();
+        finalPrices = { ...settingsFromSupabase.defaultPrices };
+      }
       // היצירה עצמה עוברת דרך ה-RPC של Supabase - ה-id האמיתי (uuid) מגיע
       // בחזרה מהשרת, לא נוצר יותר מקומית עם uid('sale_').
       const sale = await adminCreateSale({
@@ -2147,7 +2155,7 @@ export default function App() {
       setCurrentSaleId(sale.id);
       notify('המכירה נפתחה');
     },
-    [currentSaleId, salesById, salesIndex, settings]
+    [currentSaleId, salesById, salesIndex]
   );
 
   const closeSale = useCallback(
@@ -2209,7 +2217,6 @@ export default function App() {
         <Spinner />
       ) : view === 'customer' ? (
         <CustomerView
-          settings={settings}
           onSubmitOrder={submitOrder}
           onGoAdmin={() => setView('admin-gate')}
         />
