@@ -24,6 +24,22 @@ export async function getOpenSale() {
   }
 }
 
+export async function getPublicSettings() {
+  const { data, error } = await supabase.rpc('get_public_settings')
+  if (error) throw error
+  const row = Array.isArray(data) ? data[0] : data
+  if (!row) return null
+
+  return {
+    sellerName: row.seller_name,
+    phone: row.phone,
+    bitLink: row.bit_link,
+    payboxLink: row.paybox_link,
+    customerIntro: row.customer_intro,
+    pickupInfo: row.pickup_info,
+  }
+}
+
 export async function createOrder({ saleId, firstName, lastName, phone, area, qty, notes, paymentMethod, markPaid }) {
   const { data, error } = await supabase.rpc('create_order', {
     p_sale_id: saleId,
