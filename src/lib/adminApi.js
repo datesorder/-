@@ -8,7 +8,7 @@ import { supabase } from './supabaseClient'
 export async function adminGetSettings() {
   const { data, error } = await supabase
     .from('settings')
-    .select('seller_name, phone, customer_intro, pickup_info, bit_link, paybox_link, default_prices')
+    .select('id, seller_name, phone, customer_intro, pickup_info, bit_link, paybox_link, default_prices')
     .limit(1)
     .single()
 
@@ -17,6 +17,7 @@ export async function adminGetSettings() {
   }
 
   return {
+    id: data.id,
     sellerName: data.seller_name,
     phone: data.phone,
     customerIntro: data.customer_intro,
@@ -25,6 +26,23 @@ export async function adminGetSettings() {
     payboxLink: data.paybox_link,
     defaultPrices: data.default_prices,
   }
+}
+
+export async function adminSaveSettings(settings) {
+  const { error } = await supabase
+    .from('settings')
+    .update({
+      seller_name: settings.sellerName,
+      phone: settings.phone,
+      customer_intro: settings.customerIntro,
+      pickup_info: settings.pickupInfo,
+      bit_link: settings.bitLink,
+      paybox_link: settings.payboxLink,
+      default_prices: settings.defaultPrices,
+    })
+    .eq('id', settings.id)
+
+  if (error) throw error
 }
 
 export async function adminListSales() {
