@@ -48,7 +48,7 @@ export async function adminSaveSettings(settings) {
 export async function adminListSales({ limit = 4 } = {}) {
   let query = supabase
     .from('sales')
-    .select('id, name, status, open_date, deadline, stock_enabled, stock_total, prices')
+    .select('id, name, status, open_date, deadline, stock_enabled, stock_total, prices, pickup_date')
     .order('open_date', { ascending: false })
 
   if (limit) {
@@ -65,13 +65,23 @@ export async function adminListSales({ limit = 4 } = {}) {
     status: s.status,
     openDate: s.open_date,
     deadline: s.deadline,
+    pickupDate: s.pickup_date,
     stockEnabled: s.stock_enabled,
     stockTotal: s.stock_total,
     prices: s.prices,
   }))
 }
 
-export async function adminCreateSale({ name, deadline, prices, stockEnabled, stockTotal, closeCurrent }) {
+// ממיר Date/מחרוזת לתאריך-בלבד בפורמט YYYY-MM-DD, או null אם לא סופק.
+function toDateOnlyString(value) {
+  if (!value) return null
+  if (value instanceof Date) {
+    return value.toISOString().slice(0, 10)
+  }
+  return value
+}
+
+export async function adminCreateSale({ name, deadline, prices, stockEnabled, stockTotal, closeCurrent, pickupDate }) {
   const { data, error } = await supabase.rpc('admin_create_sale', {
     p_name: name,
     p_deadline: deadline,
@@ -79,6 +89,7 @@ export async function adminCreateSale({ name, deadline, prices, stockEnabled, st
     p_stock_enabled: !!stockEnabled,
     p_stock_total: stockTotal ?? null,
     p_close_current: closeCurrent !== false,
+    p_pickup_date: toDateOnlyString(pickupDate),
   })
 
   if (error) throw error
@@ -96,6 +107,7 @@ export async function adminCreateSale({ name, deadline, prices, stockEnabled, st
     prices: row.prices,
     orderSeq: row.order_seq,
     deadline: row.deadline,
+    pickupDate: row.pickup_date,
   }
 }
 
