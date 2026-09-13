@@ -91,19 +91,6 @@ const db = {
       // window.storage אינו קיים מחוץ לסביבת Claude - מתעלמים בשקט
     }
   },
-  // TODO(Supabase): today this is a simple key/value lookup. In Supabase this
-  // becomes `select * from customers where phone = $1`.
-  // Keyed by a sanitized (digits-only) phone, not the raw typed string —
-  // window.storage keys can't contain spaces, and customers type phone
-  // numbers with all kinds of formatting (spaces, dots, dashes).
-  async getCustomer(phone) {
-    try {
-      const r = await window.storage.get(`customer:${sanitizePhoneKey(phone)}`, SHARED);
-      return r ? JSON.parse(r.value) : null;
-    } catch {
-      return null;
-    }
-  },
   // TODO(Supabase): becomes an upsert into `customers` (on conflict phone).
   async saveCustomer(customer) {
     try {
@@ -123,19 +110,6 @@ const db = {
    today makes the eventual swap a small, mechanical change. */
 
 /* ========================= קבועים וברירות מחדל ========================= */
-
-const DEFAULT_SETTINGS = {
-  sellerName: 'משק התמרים',
-  phone: '',
-  bitLink: '',
-  payboxLink: '',
-  // ברירת המחדל למכירה חדשה בלבד. לכל מכירה יש עותק קפוא משלה ב-sale.prices,
-  // כך ששינוי כאן לא משפיע על מכירות שכבר נפתחו.
-  // תמחור מדורג: 1-3 קופסאות = 40 ₪ ליחידה, 4+ = 35 ₪ ליחידה.
-  defaultPrices: { tiers: [{ minQty: 1, pricePerUnit: 40 }, { minQty: 4, pricePerUnit: 35 }] },
-  customerIntro: 'תמרים טריים, ישר מהמשק, נמכרים בערך פעם בחודש.',
-  pickupInfo: '',
-};
 
 const PAYMENT_METHODS = [
   { v: 'cash', label: 'מזומן' },
