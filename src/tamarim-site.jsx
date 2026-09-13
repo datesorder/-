@@ -4,111 +4,6 @@ import { supabase } from './lib/supabaseClient';
 import { adminGetSettings, adminListSales, adminCreateSale, adminGetOrders, adminGetCustomer, adminUpdateOrder, adminBulkUpdateOrders, adminCloseSale, adminSaveSettings } from './lib/adminApi';
 import { getOpenSale, createOrder, getPublicSettings } from './lib/publicApi';
 
-/* =========================================================================
-   שכבת גישה לנתונים (Data Access Layer)
-   -------------------------------------------------------------------------
-   כל התקשורת עם האחסון עוברת רק דרך האובייקט `db` שלמטה.
-   כרגע הוא משתמש באחסון הזמני של הסביבה (window.storage) כדי שהאתר
-   יעבוד ויישמר בין ביקורים כבר עכשיו.
-
-   TODO(Supabase): כשיהיה חיבור אמיתי ל-Supabase, צריך להחליף רק את
-   הפונקציות בתוך האובייקט הזה (באותם שמות ואותה חתימה) בקריאות
-   supabase-js מול טבלאות sales / orders / settings. שאר האפליקציה
-   לא צריכה להשתנות בכלל.
-   ========================================================================= */
-
-const SHARED = true; // כל המבקרים (לקוחות + מנהל) חולקים את אותם הנתונים
-
-function uid(prefix = '') {
-  return `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
-}
-
-// הופך כל צורת כתיבה של טלפון (עם רווחים/נקודות/מקפים) למפתח תקין ועקבי
-// לאחסון, כדי שהתאמת "לקוח חוזר" תעבוד גם אם מספרים נכתבו בפורמט שונה,
-// ובעיקר כדי שלעולם לא ניצור מפתח לא-תקין (למשל עם רווח) שיגרום לשמירה להיכשל.
-function sanitizePhoneKey(phone) {
-  return (phone || '').replace(/[^0-9]/g, '') || 'unknown';
-}
-
-const db = {
-  async getSettings() {
-    try {
-      const r = await window.storage.get('settings', SHARED);
-      return r ? JSON.parse(r.value) : null;
-    } catch {
-      return null;
-    }
-  },
-  async saveSettings(settings) {
-    try {
-      await window.storage.set('settings', JSON.stringify(settings), SHARED);
-    } catch {
-      // window.storage אינו קיים מחוץ לסביבת Claude - מתעלמים בשקט
-    }
-  },
-  async listSaleIds() {
-    try {
-      const r = await window.storage.get('salesIndex', SHARED);
-      return r ? JSON.parse(r.value) : [];
-    } catch {
-      return [];
-    }
-  },
-  async saveSaleIds(ids) {
-    try {
-      await window.storage.set('salesIndex', JSON.stringify(ids), SHARED);
-    } catch {
-      // window.storage אינו קיים מחוץ לסביבת Claude - מתעלמים בשקט
-    }
-  },
-  async getSale(id) {
-    try {
-      const r = await window.storage.get(`sale:${id}`, SHARED);
-      return r ? JSON.parse(r.value) : null;
-    } catch {
-      return null;
-    }
-  },
-  async saveSale(sale) {
-    try {
-      await window.storage.set(`sale:${sale.id}`, JSON.stringify(sale), SHARED);
-    } catch {
-      // window.storage אינו קיים מחוץ לסביבת Claude - מתעלמים בשקט
-    }
-  },
-  async getOrders(saleId) {
-    try {
-      const r = await window.storage.get(`orders:${saleId}`, SHARED);
-      return r ? JSON.parse(r.value) : [];
-    } catch {
-      return [];
-    }
-  },
-  async saveOrders(saleId, orders) {
-    try {
-      await window.storage.set(`orders:${saleId}`, JSON.stringify(orders), SHARED);
-    } catch {
-      // window.storage אינו קיים מחוץ לסביבת Claude - מתעלמים בשקט
-    }
-  },
-  // TODO(Supabase): becomes an upsert into `customers` (on conflict phone).
-  async saveCustomer(customer) {
-    try {
-      await window.storage.set(`customer:${sanitizePhoneKey(customer.phone)}`, JSON.stringify(customer), SHARED);
-    } catch {
-      // window.storage אינו קיים מחוץ לסביבת Claude - מתעלמים בשקט
-    }
-  },
-};
-
-/* TODO(Supabase): the `submitOrder` function inside the App component
-   further down is written to mirror exactly what the
-   `create_order` Postgres RPC function will do once Supabase is connected:
-   look up the sale, validate it's open, compute the amount from the sale's
-   frozen prices (never trust a client-supplied amount), upsert the
-   customer by phone, and insert the order. Keeping that logic in one place
-   today makes the eventual swap a small, mechanical change. */
-
 /* ========================= קבועים וברירות מחדל ========================= */
 
 const PAYMENT_METHODS = [
@@ -267,8 +162,7 @@ function exportOrdersToCSV(sale, orders) {
 }
 
 // דוח מלא של מכירה: קובץ Excel (.xlsx) אמיתי עם גיליון הזמנות מפורט
-// וגיליון סיכום. עובד היום מקומית/DEMO; אחרי חיבור Supabase אותה פונקציה
-// יכולה להישאר זהה - רק מקור ה-orders/sale ישתנה מ-window.storage לשאילתה.
+// וגיליון סיכום. sale/orders מגיעים מ-Supabase (adminListSales/adminGetOrders).
 function buildSaleReportWorkbook(sale, orders) {
   const active = orders.filter((o) => o.orderStatus !== 'cancelled');
   const cancelled = orders.filter((o) => o.orderStatus === 'cancelled');
@@ -456,9 +350,8 @@ function CustomerView({ onSubmitOrder, onGoAdmin }) {
   const [publicSettingsLoading, setPublicSettingsLoading] = useState(true);
   const [publicSettingsLoadError, setPublicSettingsLoadError] = useState('');
 
-  // המכירה הפתוחה מגיעה ישירות מ-Supabase (get_open_sale), לא מ-window.storage.
-  // זה מקור מבודד לגמרי מהצד הציבורי - לא נוגע ב-app.salesById/db.getSale
-  // שממשיכים לשרת את אזור הניהול בדיוק כפי שהיה.
+  // המכירה הפתוחה מגיעה ישירות מ-Supabase (get_open_sale). זה מקור מבודד
+  // לגמרי מהצד הציבורי - לא נוגע ב-app.salesById ששרת רק את אזור הניהול.
   useEffect(() => {
     let active = true;
     getOpenSale()
@@ -478,10 +371,9 @@ function CustomerView({ onSubmitOrder, onGoAdmin }) {
   }, []);
 
   // הגדרות ציבוריות (טלפון, קישורי Bit/PayBox, טקסט פתיחה) מגיעות ישירות
-  // מ-Supabase (get_public_settings), לא מה-settings prop שמגיע מ-App
-  // (שעדיין מוזן מ-window.storage ומשמש רק את OrderDetailModal בצד הניהול).
-  // מבודד לגמרי, באותו דפוס בדיוק כמו טעינת ה-sale למעלה. אין fallback
-  // ל-window.storage בכוונה - עדיף להראות שגיאה מפורשת מאשר הגדרות ישנות.
+  // מ-Supabase (get_public_settings). מבודד לגמרי, באותו דפוס בדיוק כמו
+  // טעינת ה-sale למעלה. אין fallback בכוונה - עדיף להראות שגיאה מפורשת
+  // מאשר הגדרות ישנות.
   useEffect(() => {
     let active = true;
     getPublicSettings()
@@ -1142,7 +1034,7 @@ function OrderDetailModal({ app, saleId, order, onClose }) {
 
   const [customerInfo, setCustomerInfo] = useState(null);
   // הגדרות נטענות כאן ישירות מ-Supabase (adminGetSettings, אותה פונקציה
-  // שכבר משמשת את SettingsTab) - לא יותר מ-app.settings (window.storage).
+  // שכבר משמשת את SettingsTab).
   const [modalSettings, setModalSettings] = useState(null);
 
   useEffect(() => {
@@ -1430,8 +1322,8 @@ function SalesManagementTab({ app }) {
   const [otherSalesError, setOtherSalesError] = useState('');
 
   // רשימת "שכפול מכירה קודמת" נטענת ישירות מ-Supabase, במבודד לגמרי -
-  // לא נוגעת ב-app.salesIndex/app.salesById (עדיין מוזנים מ-window.storage
-  // ומשמשים את "מכירה נוכחית" ואת שאר האתר בדיוק כפי שהיה עד עכשיו).
+  // לא נוגעת ב-app.salesIndex/app.salesById (ששרתים את "מכירה נוכחית"
+  // ואת שאר האתר בדיוק כפי שהיה עד עכשיו).
   useEffect(() => {
     let active = true;
     adminListSales()
@@ -1515,11 +1407,6 @@ function SalesManagementTab({ app }) {
               <Button variant="subtle" onClick={() => exportSaleReport(currentSale, app.ordersBySaleId[currentSale.id] || [])}>
                 הורדת דוח (Excel)
               </Button>
-              {DEMO_MODE && (
-                <Button variant="ghost" onClick={() => app.debugForceDeadlinePassed(currentSale.id)}>
-                  🧪 בדיקה: הזז דדליין לעבר
-                </Button>
-              )}
             </div>
           </div>
         ) : (
@@ -1586,9 +1473,7 @@ function SettingsTab({ app }) {
   const [loadError, setLoadError] = useState('');
   const [saved, setSaved] = useState(false);
 
-  // טעינה מבודדת ל-Admin בלבד, ישירות מ-Supabase. לא נוגעת ב-app.settings
-  // (עדיין מוזן מ-db.getSettings()/window.storage ומשמש את הצד הציבורי
-  // בדיוק כפי שהיה עד עכשיו).
+  // טעינה מבודדת ל-Admin בלבד, ישירות מ-Supabase.
   useEffect(() => {
     let active = true;
     adminGetSettings()
@@ -1722,138 +1607,6 @@ function SettingsTab({ app }) {
 }
 
 
-/* ============================================================================
-   ██  DEMO DATA — בלוק בדיקה בלבד  ██
-   ----------------------------------------------------------------------------
-   כל מה שבין השורה הזו לבין סימון END DEMO DATA למטה הוא לצורך בדיקת האתר
-   עם נתונים לדוגמה בלבד, לפני חיבור Supabase. שמות/טלפונים פיקטיביים לגמרי.
-
-   לכיבוי מצב הדגמה: להפוך את DEMO_MODE ל-false (שורה הבאה).
-   להסרה מוחלטת בעתיד: למחוק את כל הבלוק הזה (עד סימון END DEMO DATA), ואת שורת
-   הקריאה היחידה ל-seedDemoData() בתוך App (מסומנת שם באותו תג DEMO_MODE).
-   שום קובץ אחר לא נוגע בבלוק הזה — הנתונים כתובים באותו מבנה בדיוק
-   (settings / sale / customers / orders) שהמערכת האמיתית משתמשת בו, ונכתבים
-   דרך אותן פונקציות db.* בדיוק, כך שהבדיקה משקפת נאמנה את ההתנהגות האמיתית.
-   ============================================================================ */
-
-const DEMO_MODE = true;
-
-function daysAgo(n, hour = 10) {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  d.setHours(hour, 15, 0, 0);
-  return d.toISOString();
-}
-
-function daysFromNow(n, hour = 20) {
-  const d = new Date();
-  d.setDate(d.getDate() + n);
-  d.setHours(hour, 0, 0, 0);
-  return d.toISOString();
-}
-
-const DEMO_SALE_ID = 'demo-sale-2026-09';
-const DEMO_PRICES = { tiers: [{ minQty: 1, pricePerUnit: 40 }, { minQty: 4, pricePerUnit: 35 }] };
-
-const DEMO_SETTINGS = {
-  sellerName: 'משק התמרים של אבא (דמו)',
-  phone: '050-0000000',
-  bitLink: 'https://bit.ly/demo-bit-link',
-  payboxLink: 'https://paybox.co.il/demo-link',
-  defaultPrices: { ...DEMO_PRICES },
-  customerIntro: 'תמרים טריים, ישר מהמשק. זהו נתוני דמו לבדיקת האתר בלבד.',
-  pickupInfo: 'איסוף עצמי בימי חמישי בין 17:00–19:00 (כתובת לדוגמה).',
-};
-
-const DEMO_SALE = {
-  id: DEMO_SALE_ID,
-  name: 'מכירת תמרים – ספטמבר 2026 (דמו)',
-  openDate: daysAgo(9),
-  closeDate: null,
-  status: 'open',
-  stockEnabled: true,
-  stockTotal: 60,
-  prices: { ...DEMO_PRICES },
-  orderSeq: 14,
-  deadline: daysFromNow(5), // עוד 5 ימים מהיום, כדי שאפשר לבדוק "לפני הדדליין" כרגע
-};
-
-// שם + טלפון פיקטיביים לגמרי, לצורך בדיקה בלבד
-const DEMO_ORDERS_RAW = [
-  { n: 1, first: 'יוסי', last: 'כהן', phone: '050-1000001', area: 'מודיעין', qty: 2, method: 'cash', paid: true, status: 'delivered', day: 8 },
-  { n: 2, first: 'רותי', last: 'לוי', phone: '050-1000002', area: 'רעננה', qty: 1, method: 'bit', paid: true, status: 'pending_pickup', day: 8 },
-  { n: 3, first: 'דוד', last: 'מזרחי', phone: '050-1000003', area: 'חולון', qty: 4, method: 'paybox', paid: false, status: 'pending_pickup', day: 7 },
-  { n: 4, first: 'מאיה', last: 'ברק', phone: '050-1000004', area: 'כפר סבא', qty: 3, method: 'cash', paid: true, status: 'pending_pickup', day: 6 },
-  { n: 5, first: 'שרה', last: 'אברהם', phone: '050-1000005', area: '', qty: 1, method: 'other', paid: false, status: 'pending_pickup', day: 6 },
-  { n: 6, first: 'יוסי', last: 'כהן', phone: '050-1000001', area: 'מודיעין', qty: 1, method: 'bit', paid: true, status: 'delivered', day: 5, notes: 'הזמנה חוזרת, תודה!' },
-  { n: 7, first: 'אורית', last: 'שלום', phone: '050-1000007', area: 'הרצליה', qty: 2, method: 'cash', paid: false, status: 'pending_pickup', day: 5 },
-  { n: 8, first: 'אבי', last: 'פרץ', phone: '050-1000008', area: 'ראשון לציון', qty: 4, method: 'paybox', paid: true, status: 'pending_pickup', day: 4 },
-  { n: 9, first: 'נועה', last: 'גולן', phone: '050-1000009', area: 'פתח תקווה', qty: 2, method: 'bit', paid: false, status: 'pending_pickup', day: 4 },
-  { n: 10, first: 'רותי', last: 'לוי', phone: '050-1000002', area: 'רעננה', qty: 3, method: 'cash', paid: true, status: 'delivered', day: 3 },
-  { n: 11, first: 'אלי', last: 'דגן', phone: '050-1000011', area: 'נתניה', qty: 1, method: 'cash', paid: false, status: 'cancelled', day: 3, notes: 'ביטל טלפונית' },
-  { n: 12, first: 'גלית', last: 'נחום', phone: '050-1000012', area: '', qty: 3, method: 'other', paid: false, status: 'pending_pickup', day: 2 },
-  { n: 13, first: 'עידו', last: 'שגיא', phone: '050-1000013', area: 'רמת גן', qty: 2, method: 'paybox', paid: true, status: 'pending_pickup', day: 1 },
-  { n: 14, first: 'טל', last: 'ארז', phone: '050-1000014', area: 'גבעתיים', qty: 1, method: 'bit', paid: false, status: 'pending_pickup', day: 0 },
-];
-
-function buildDemoOrders() {
-  return DEMO_ORDERS_RAW.map((o) => ({
-    id: `demo_ord_${o.n}`,
-    orderNumber: `#${String(o.n).padStart(3, '0')}`,
-    saleId: DEMO_SALE_ID,
-    createdAt: daysAgo(o.day),
-    firstName: o.first,
-    lastName: o.last,
-    phone: o.phone,
-    area: o.area,
-    qty: o.qty,
-    amount: calcAmount(DEMO_PRICES, o.qty),
-    pricingSnapshot: { ...DEMO_PRICES },
-    paymentMethod: o.method,
-    paymentStatus: o.paid ? 'paid' : 'pending',
-    orderStatus: o.status,
-    notes: o.notes || '',
-    internalNote: '',
-  }));
-}
-
-function buildDemoCustomers() {
-  const map = {};
-  for (const o of DEMO_ORDERS_RAW) {
-    if (!map[o.phone]) {
-      map[o.phone] = { phone: o.phone, firstName: o.first, lastName: o.last, area: o.area, totalOrders: 0, totalPackages: 0 };
-    }
-    map[o.phone].totalOrders += 1;
-    map[o.phone].totalPackages += o.qty;
-    map[o.phone].firstName = o.first;
-    map[o.phone].lastName = o.last;
-  }
-  return Object.values(map);
-}
-
-// נכתב דרך אותן פונקציות db.* בדיוק שהאפליקציה האמיתית משתמשת בהן —
-// כך שה"בדיקה" עוברת דרך אותה שכבת נתונים שתחליף אחר כך ל-Supabase.
-async function seedDemoData() {
-  await db.saveSettings(DEMO_SETTINGS);
-  await db.saveSaleIds([DEMO_SALE_ID]);
-  await db.saveSale(DEMO_SALE);
-  await db.saveOrders(DEMO_SALE_ID, buildDemoOrders());
-  for (const c of buildDemoCustomers()) {
-    await db.saveCustomer(c);
-  }
-}
-
-function DemoBanner() {
-  if (!DEMO_MODE) return null;
-  return (
-    <div className="bg-amber-900 py-1.5 text-center text-xs font-medium text-amber-50">
-      🧪 מצב הדגמה — כל הנתונים כאן פיקטיביים לצורך בדיקה, ולא נשמרים לצמיתות
-    </div>
-  );
-}
-
-/* END DEMO DATA */
-
 /* ================================ App =================================== */
 
 export default function App() {
@@ -1878,9 +1631,9 @@ export default function App() {
     setTimeout(() => setToast(''), 2500);
   }
 
-  // בודקת אם קיימת מכירה פתוחה אמיתית ב-Supabase, ואם כן - מחליפה בה את
-  // salesById/currentSaleId/ordersBySaleId המקומיים (שמקורם ב-window.storage/
-  // demo). מיושמת פעם אחת בלבד בזכות ה-ref: אם כבר נמצאה/הוחלה בעבר (למשל
+  // בודקת אם קיימת מכירה פתוחה אמיתית ב-Supabase, ואם כן - קובעת לפיה את
+  // salesById/currentSaleId/ordersBySaleId (המקור היחיד לנתונים האלה כיום).
+  // מיושמת פעם אחת בלבד בזכות ה-ref: אם כבר נמצאה/הוחלה בעבר (למשל
   // ע"י ה-bootstrap, כשכבר יש session תקף מרענון קודם), קריאה נוספת (למשל
   // מיד אחרי login) היא no-op ולא יוצרת טעינה כפולה.
   const applySupabaseOpenSale = useCallback(async () => {
@@ -1907,23 +1660,26 @@ export default function App() {
         }
       } else {
         // Supabase ענתה בהצלחה (בלי error) שאין אף מכירה עם status='open' -
-        // זו תשובה אמינה, לא כשל. מאפסים את currentSaleId כדי לא להמשיך
-        // "לתקוע" מכירה ישנה מ-window.storage כאילו היא עדיין המכירה
-        // הנוכחית. salesById/ordersBySaleId לא נוקים - DashboardTab/
-        // OrdersTab/SalesManagementTab כולם בודקים קודם currentSaleId,
-        // אז null מספיק כדי שכולם יגיעו נכון למצב "אין מכירה פתוחה".
+        // זו תשובה אמינה, לא כשל. מאפסים את currentSaleId (למרות שזה כבר
+        // ערך ברירת המחדל) כדי להיות מפורשים. salesById/ordersBySaleId לא
+        // נוקים - DashboardTab/OrdersTab/SalesManagementTab כולם בודקים
+        // קודם currentSaleId, אז null מספיק כדי שכולם יגיעו נכון למצב
+        // "אין מכירה פתוחה".
         setCurrentSaleId(null);
         supabaseSaleAppliedRef.current = true;
       }
     } catch (err) {
-      console.warn('adminListSales check failed, staying with window.storage sale', err);
+      // כשל אמיתי (רשת/הרשאה) - לא נוגעים ב-state בכלל. currentSaleId
+      // נשאר על ערך ברירת המחדל (null), וה-UI הקיים כבר יודע להציג
+      // "אין כרגע מכירה פתוחה" - בלי קריסה ובלי נתונים ישנים/דמו.
+      console.warn('adminListSales check failed', err);
     } finally {
       supabaseSaleInFlightRef.current = false;
     }
   }, []);
 
   // מעקב Session אמיתי אחרי Supabase Auth - Effect נפרד ובלתי-תלוי לגמרי
-  // מה-Effect שטוען את נתוני האתר הציבורי (DEMO_MODE/window.storage) למטה,
+  // מה-Effect שטוען את נתוני המכירה הפתוחה למטה (applySupabaseOpenSale),
   // כדי שכשל כלשהו כאן לעולם לא יחסום את טעינת האתר הציבורי. session הוא
   // מקור האמת היחיד לגישת ניהול - לא view - כי view הוא רק ניווט UI.
   useEffect(() => {
@@ -1953,8 +1709,8 @@ export default function App() {
   }, [session, view]);
 
   // בכניסה ראשונה (login טרי), ה-bootstrap שלמטה עלול לנסות לבדוק את
-  // Supabase לפני שיש session תקף בכלל (ולכן נכשל בשקט ונשאר על ברירת
-  // המחדל מ-window.storage). ברגע שה-session הופך זמין (מיד אחרי login),
+  // Supabase לפני שיש session תקף בכלל (ולכן נכשל בשקט, ו-currentSaleId
+  // נשאר על ברירת המחדל null). ברגע שה-session הופך זמין (מיד אחרי login),
   // מנסים שוב - applySupabaseOpenSale כבר מוגנת מפני ריצה כפולה, כך שאם
   // ה-bootstrap כבר הצליח בעצמו (למשל ברענון עם session קיים), זו קריאה
   // חסרת אפקט (no-op).
@@ -1966,51 +1722,14 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      if (DEMO_MODE) {
-        // זריעה חד-פעמית בלבד: אם כבר יש settings שמורים, סימן שכבר זרענו
-        // בעבר - לא דורסים שוב, כדי שהזמנות/שינויים שנוצרו במהלך הבדיקה
-        // (כולל אחרי reload) לא יימחקו. זריעה אמיתית קורית רק בפעם הראשונה.
-        const alreadySeeded = await db.getSettings();
-        if (!alreadySeeded) {
-          await seedDemoData();
-        }
-      }
-      const index = await db.listSaleIds();
-      const byId = {};
-      for (const id of index) {
-        const sale = await db.getSale(id);
-        if (sale) byId[id] = sale;
-      }
-
-      // סגירת מכירות שעבר הדדליין שלהן — נבדק "on demand" בטעינה בלבד
-      // (אין תזמון רקע אמיתי). זה משתמש באותו שדה status הקיים, לא במנגנון
-      // מקביל. אחרי חיבור Supabase, זו תהיה עבודה טבעית ל-Cron/Edge Function.
-      for (const id of index) {
-        const sale = byId[id];
-        if (sale && sale.status === 'open' && isDeadlinePassed(sale)) {
-          const closed = { ...sale, status: 'closed', closeDate: sale.deadline };
-          byId[id] = closed;
-          await db.saveSale(closed);
-        }
-      }
-
-      const openId = index.find((id) => byId[id]?.status === 'open') || null;
-      const ordersMap = {};
-      if (openId) ordersMap[openId] = await db.getOrders(openId);
-
-      setSalesIndex(index);
-      setSalesById(byId);
-      setCurrentSaleId(openId);
-      setOrdersBySaleId(ordersMap);
-      setLoadedSaleIds(new Set(openId ? [openId] : []));
-
-      // עדיפות למכירה אמיתית מ-Supabase, אם קיימת - מוחלת (אם נמצאה) על
-      // גבי מה שנקבע כרגע מ-window.storage/DEMO. אם זה נכשל כרגע (למשל
-      // בכניסה ראשונה, לפני שיש session תקף עדיין) - ה-Effect הנפרד
-      // שמאזין ל-session ינסה שוב אוטומטית ברגע שההתחברות תסתיים;
-      // applySupabaseOpenSale מוגנת בעצמה מפני הרצה כפולה/מקבילה.
+      // ה-bootstrap כולו מסתמך אך ורק על Supabase דרך applySupabaseOpenSale():
+      // אם נמצאה מכירה פתוחה - היא מוצגת עם ההזמנות שלה; אם Supabase ענתה
+      // בהצלחה שאין מכירה פתוחה - currentSaleId מתאפס ל-null (המצב ההתחלתי
+      // ממילא) וה-UI הקיים כבר יודע להציג "אין כרגע מכירה פתוחה"; ואם
+      // הקריאה נכשלת (רשת/הרשאה) - ה-catch הפנימי של applySupabaseOpenSale
+      // רק רושם אזהרה ולא נוגע ב-state כלל, כך שהאפליקציה נשארת פשוט על
+      // המצב ההתחלתי (currentSaleId=null) - בלי קריסה ובלי נתונים ישנים.
       await applySupabaseOpenSale();
-
       setLoading(false);
     })();
   }, []);
@@ -2023,9 +1742,9 @@ export default function App() {
   }, []);
 
   // הצד הציבורי: יצירת הזמנה עוברת עכשיו דרך create_order() ב-Supabase
-  // (RPC), לא דרך window.storage. sale מגיע מה-formData (נטען ב-CustomerView
-  // עצמו דרך get_open_sale()) - לא מ-salesById/currentSaleId המשותפים, כדי
-  // לא לערבב בין המכירה האמיתית (Supabase) לבין הצד שעדיין משמש את Admin.
+  // (RPC). sale מגיע מה-formData (נטען ב-CustomerView עצמו דרך
+  // get_open_sale()) - לא מ-salesById/currentSaleId המשותפים, כדי לשמור
+  // את הצד הציבורי מבודד מה-state המשותף שמשמש גם את Admin.
   const submitOrder = useCallback(async (formData) => {
     const sale = formData.sale;
     // בדיקה סמכותית מקומית, לא רק תצוגתית: גם אם הטאב נשאר פתוח מעבר
@@ -2088,16 +1807,11 @@ export default function App() {
 
   const createSale = useCallback(
     async ({ name, stockEnabled, stockTotal, closeCurrent, prices, deadline }) => {
-      if (closeCurrent && currentSaleId && salesById[currentSaleId]) {
-        const closed = { ...salesById[currentSaleId], status: 'closed' };
-        await db.saveSale(closed);
-        setSalesById((m) => ({ ...m, [closed.id]: closed }));
-      }
       // עותק קבוע של המחירים בזמן פתיחת המכירה - זו הפעולה המקבילה ל-
       // "sale.prices := settings.default_prices" שכבר קיימת בפועל בתוך
       // admin_create_sale() בצד השרת. כשלא מועברים prices מפורשים (מכירה
       // חדשה שאינה שכפול), נטענת ברירת המחדל ישירות מ-Supabase - lazy,
-      // רק ברגע הזה, בלי לגעת ב-App.settings (window.storage) בכלל.
+      // רק ברגע הזה, בלי טעינה מוקדמת/state נוסף.
       let finalPrices;
       if (prices) {
         finalPrices = { ...prices };
@@ -2121,7 +1835,7 @@ export default function App() {
       setCurrentSaleId(sale.id);
       notify('המכירה נפתחה');
     },
-    [currentSaleId, salesById, salesIndex]
+    [salesIndex]
   );
 
   const closeSale = useCallback(
@@ -2139,17 +1853,6 @@ export default function App() {
   // כדי שאפשר לבדוק בפועל שהזמנה נחסמת בלי לחכות לזמן אמיתי.
   // הסטטוס נשאר 'open' בכוונה, כדי לדמות בדיוק את הרגע שבו הדדליין עבר
   // אבל אף אחד עדיין לא טען מחדש את הדף (שם הבדיקה 'on demand' רצה).
-  const debugForceDeadlinePassed = useCallback(
-    async (saleId) => {
-      if (!DEMO_MODE) return;
-      const sale = { ...salesById[saleId], deadline: new Date(Date.now() - 60000).toISOString() };
-      await db.saveSale(sale);
-      setSalesById((m) => ({ ...m, [saleId]: sale }));
-      notify('הדדליין הוזז לעבר (לבדיקה בלבד)');
-    },
-    [salesById]
-  );
-
   const app = {
     salesIndex,
     salesById,
@@ -2163,7 +1866,6 @@ export default function App() {
     saveSettings,
     createSale,
     closeSale,
-    debugForceDeadlinePassed,
     exitAdmin: async () => {
       try {
         await supabase.auth.signOut();
@@ -2177,7 +1879,6 @@ export default function App() {
   return (
     <div dir="rtl" lang="he" className="tmr-root min-h-screen bg-amber-50">
       <GlobalStyle />
-      <DemoBanner />
       {loading ? (
         <Spinner />
       ) : view === 'customer' ? (
