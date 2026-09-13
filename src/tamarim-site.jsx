@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabaseClient';
-import { adminGetSettings, adminListSales, adminCreateSale, adminGetOrders, adminGetCustomer, adminUpdateOrder, adminBulkUpdateOrders, adminCloseSale } from './lib/adminApi';
+import { adminGetSettings, adminListSales, adminCreateSale, adminGetOrders, adminGetCustomer, adminUpdateOrder, adminBulkUpdateOrders, adminCloseSale, adminSaveSettings } from './lib/adminApi';
 import { getOpenSale, createOrder } from './lib/publicApi';
 
 /* =========================================================================
@@ -2038,7 +2038,7 @@ export default function App() {
   );
 
   const saveSettings = useCallback(async (newSettings) => {
-    await db.saveSettings(newSettings);
+    await adminSaveSettings(newSettings);
     setSettings(newSettings);
   }, []);
 
