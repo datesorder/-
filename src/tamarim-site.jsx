@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabaseClient';
 import { adminGetSettings, adminListSales, adminCreateSale, adminGetOrders, adminGetCustomer, adminUpdateOrder, adminBulkUpdateOrders, adminCloseSale, adminSaveSettings } from './lib/adminApi';
-import { getOpenSale, createOrder } from './lib/publicApi';
+import { getOpenSale, createOrder, getPublicSettings } from './lib/publicApi';
 
 /* =========================================================================
    שכבת גישה לנתונים (Data Access Layer)
@@ -478,6 +478,9 @@ function CustomerView({ settings, onSubmitOrder, onGoAdmin }) {
   const [sale, setSale] = useState(null);
   const [saleLoading, setSaleLoading] = useState(true);
   const [saleLoadError, setSaleLoadError] = useState('');
+  const [publicSettings, setPublicSettings] = useState(null);
+  const [publicSettingsLoading, setPublicSettingsLoading] = useState(true);
+  const [publicSettingsLoadError, setPublicSettingsLoadError] = useState('');
 
   // המכירה הפתוחה מגיעה ישירות מ-Supabase (get_open_sale), לא מ-window.storage.
   // זה מקור מבודד לגמרי מהצד הציבורי - לא נוגע ב-app.salesById/db.getSale
@@ -500,6 +503,29 @@ function CustomerView({ settings, onSubmitOrder, onGoAdmin }) {
     };
   }, []);
 
+  // הגדרות ציבוריות (טלפון, קישורי Bit/PayBox, טקסט פתיחה) מגיעות ישירות
+  // מ-Supabase (get_public_settings), לא מה-settings prop שמגיע מ-App
+  // (שעדיין מוזן מ-window.storage ומשמש רק את OrderDetailModal בצד הניהול).
+  // מבודד לגמרי, באותו דפוס בדיוק כמו טעינת ה-sale למעלה. אין fallback
+  // ל-window.storage בכוונה - עדיף להראות שגיאה מפורשת מאשר הגדרות ישנות.
+  useEffect(() => {
+    let active = true;
+    getPublicSettings()
+      .then((data) => {
+        if (active) setPublicSettings(data);
+      })
+      .catch((err) => {
+        console.error('getPublicSettings failed', err);
+        if (active) setPublicSettingsLoadError('אירעה שגיאה בטעינת ההגדרות. נסו לרענן את הדף.');
+      })
+      .finally(() => {
+        if (active) setPublicSettingsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const activePrices = sale?.prices || settings.defaultPrices;
   const amount = calcAmount(activePrices, form.qty);
   // stock_remaining כבר מחושב בצד השרת בתוך get_open_sale() - אין יותר
@@ -508,7 +534,7 @@ function CustomerView({ settings, onSubmitOrder, onGoAdmin }) {
   const soldOut = sale?.stockEnabled && stockRemaining <= 0;
   const deadlinePassed = isDeadlinePassed(sale);
   const saleOpen = isSaleAcceptingOrders(sale) && !soldOut;
-  const paymentLink = form.paymentMethod === 'bit' ? settings.bitLink : form.paymentMethod === 'paybox' ? settings.payboxLink : null;
+  const paymentLink = form.paymentMethod === 'bit' ? publicSettings?.bitLink : form.paymentMethod === 'paybox' ? publicSettings?.payboxLink : null;
 
   function update(field, value) {
     setForm((f) => ({ ...f, [field]: value }));
@@ -581,7 +607,7 @@ function CustomerView({ settings, onSubmitOrder, onGoAdmin }) {
   }
 
   if (step === 'confirmation' && lastOrder) {
-    const link = lastOrder.paymentMethod === 'bit' ? settings.bitLink : lastOrder.paymentMethod === 'paybox' ? settings.payboxLink : null;
+    const link = lastOrder.paymentMethod === 'bit' ? publicSettings?.bitLink : lastOrder.paymentMethod === 'paybox' ? publicSettings?.payboxLink : null;
     return (
       <div className="mx-auto max-w-md px-4 py-10">
         <Card className="p-7 text-center">
@@ -626,23 +652,23 @@ function CustomerView({ settings, onSubmitOrder, onGoAdmin }) {
     <div className="mx-auto max-w-md px-4 pb-16">
       <div className="mt-6 rounded-2xl bg-gradient-to-b from-amber-900 to-amber-800 px-6 py-10 text-center text-amber-50">
         <h1 className="tmr-display text-4xl leading-tight">תמרים טריים להזמנה</h1>
-        <p className="mt-3 text-sm leading-relaxed text-amber-100/90">{settings.customerIntro}</p>
+        <p className="mt-3 text-sm leading-relaxed text-amber-100/90">{publicSettings?.customerIntro}</p>
         {sale && <p className="mt-4 inline-block rounded-full bg-amber-950/30 px-3 py-1 text-xs font-medium text-amber-100">{sale.name}</p>}
         {sale && sale.deadline && sale.status === 'open' && !deadlinePassed && (
           <p className="mt-2 text-xs text-amber-200">ניתן להזמין עד {fmtDeadline(sale.deadline)}</p>
         )}
       </div>
 
-      {saleLoading ? (
+      {saleLoading || publicSettingsLoading ? (
         <Spinner />
-      ) : saleLoadError ? (
-        <Card className="mt-6 p-6 text-center text-rose-700">{saleLoadError}</Card>
+      ) : saleLoadError || publicSettingsLoadError ? (
+        <Card className="mt-6 p-6 text-center text-rose-700">{saleLoadError || publicSettingsLoadError}</Card>
       ) : (
         <>
           {!sale && (
             <Card className="mt-6 p-6 text-center text-stone-500">
               אין כרגע מכירת תמרים פתוחה. אפשר לחזור בקרוב למועד המכירה הבא.
-              {settings.phone && <div className="mt-2 text-sm">לשאלות: {settings.phone}</div>}
+              {publicSettings?.phone && <div className="mt-2 text-sm">לשאלות: {publicSettings.phone}</div>}
             </Card>
           )}
 
@@ -760,7 +786,7 @@ function CustomerView({ settings, onSubmitOrder, onGoAdmin }) {
                 ) : (
                   <p className="text-xs leading-relaxed text-amber-800">
                     קישור תשלום ל{form.paymentMethod === 'bit' ? 'Bit' : 'PayBox'} עדיין לא הוגדר. אפשר לשלוח את ההזמנה ולסכם תשלום בנפרד
-                    {settings.phone ? ` (${settings.phone})` : ''}.
+                    {publicSettings?.phone ? ` (${publicSettings.phone})` : ''}.
                   </p>
                 )}
               </div>
