@@ -1321,27 +1321,49 @@ function OrderDetailModal({ app, saleId, order, onClose }) {
 
 function HistoryTab({ app }) {
   const [rows, setRows] = useState(null);
+  const [loadError, setLoadError] = useState('');
   const [drillSaleId, setDrillSaleId] = useState(null);
 
   useEffect(() => {
+    let active = true;
     (async () => {
-      const list = [];
-      for (const id of app.salesIndex) {
-        const sale = app.salesById[id];
-        const orders = app.loadedSaleIds.has(id) ? app.ordersBySaleId[id] : (await app.loadOrdersForSale(id));
-        const active = (orders || []).filter((o) => o.orderStatus !== 'cancelled');
-        list.push({
-          id,
-          sale,
-          count: active.length,
-          packages: active.reduce((s, o) => s + Number(o.qty || 0), 0),
-          revenue: active.reduce((s, o) => s + Number(o.amount || 0), 0),
-          paid: active.filter((o) => o.paymentStatus === 'paid').reduce((s, o) => s + Number(o.amount || 0), 0),
+      try {
+        // כל ההיסטוריה, לא רק 4 האחרונות (זה ה-limit שמיועד לבורר "שכפול
+        // מכירה קודמת" ב-SalesManagementTab בלבד).
+        const sales = await adminListSales({ limit: null });
+
+        // ממזגים את כל המכירות ההיסטוריות ל-cache המשותף (app.salesById) -
+        // כך ש-OrdersTab (drill-down) ימצא את המכירה הנכונה בדיוק כמו היום,
+        // בלי שום שינוי ב-OrdersTab עצמו.
+        app.setSalesById((m) => {
+          const merged = { ...m };
+          for (const sale of sales) merged[sale.id] = sale;
+          return merged;
         });
+
+        const list = [];
+        for (const sale of sales) {
+          const orders = app.loadedSaleIds.has(sale.id) ? app.ordersBySaleId[sale.id] : (await app.loadOrdersForSale(sale.id));
+          const activeOrders = (orders || []).filter((o) => o.orderStatus !== 'cancelled');
+          list.push({
+            id: sale.id,
+            sale,
+            count: activeOrders.length,
+            packages: activeOrders.reduce((s, o) => s + Number(o.qty || 0), 0),
+            revenue: activeOrders.reduce((s, o) => s + Number(o.amount || 0), 0),
+            paid: activeOrders.filter((o) => o.paymentStatus === 'paid').reduce((s, o) => s + Number(o.amount || 0), 0),
+          });
+        }
+        if (active) setRows(list);
+      } catch (err) {
+        console.error('adminListSales (history) failed', err);
+        if (active) setLoadError('אירעה שגיאה בטעינת ההיסטוריה. נסו לרענן את הדף.');
       }
-      setRows(list);
     })();
-  }, [app.salesIndex]);
+    return () => {
+      active = false;
+    };
+  }, []);
 
   if (drillSaleId) {
     return (
@@ -1357,6 +1379,7 @@ function HistoryTab({ app }) {
     );
   }
 
+  if (loadError) return <Card className="p-6 text-center text-rose-700">{loadError}</Card>;
   if (!rows) return <Spinner />;
   if (rows.length === 0) return <Card className="p-6 text-center text-stone-400">עדיין אין מכירות בהיסטוריה.</Card>;
 
@@ -2128,6 +2151,7 @@ export default function App() {
     settings,
     salesIndex,
     salesById,
+    setSalesById,
     ordersBySaleId,
     loadedSaleIds,
     currentSaleId,
