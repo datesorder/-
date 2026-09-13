@@ -1166,10 +1166,10 @@ function OrderDetailModal({ app, saleId, order, onClose }) {
   const [saving, setSaving] = useState(false);
   if (!order) return null;
 
-  const settings = app.settings;
-  const pricesForOrder = order.pricingSnapshot || settings.defaultPrices;
-  const wa = waLinkForOrder(order, settings);
   const [customerInfo, setCustomerInfo] = useState(null);
+  // הגדרות נטענות כאן ישירות מ-Supabase (adminGetSettings, אותה פונקציה
+  // שכבר משמשת את SettingsTab) - לא יותר מ-app.settings (window.storage).
+  const [modalSettings, setModalSettings] = useState(null);
 
   useEffect(() => {
     let active = true;
@@ -1180,6 +1180,26 @@ function OrderDetailModal({ app, saleId, order, onClose }) {
       active = false;
     };
   }, [order.phone]);
+
+  useEffect(() => {
+    let active = true;
+    adminGetSettings()
+      .then((data) => {
+        if (active) setModalSettings(data);
+      })
+      .catch((err) => {
+        console.error('adminGetSettings failed in OrderDetailModal', err);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // עד שההגדרות נטענות, pricesForOrder נשען רק על pricingSnapshot של ההזמנה
+  // עצמה (שכמעט תמיד קיים בפועל) - אין חסימת UI/spinner בשביל זה, כי המודל
+  // עדיין פונקציונלי לחלוטין בלעדיהן ברוב המקרים.
+  const pricesForOrder = order.pricingSnapshot || modalSettings?.defaultPrices;
+  const wa = modalSettings ? waLinkForOrder(order, modalSettings) : null;
 
   function update(field, value) {
     setForm((f) => ({ ...f, [field]: value }));
