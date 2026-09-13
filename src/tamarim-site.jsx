@@ -1297,6 +1297,8 @@ function HistoryTab({ app }) {
 
 function SalesManagementTab({ app }) {
   const [newSaleError, setNewSaleError] = useState('');
+  const [confirmingClose, setConfirmingClose] = useState(false);
+  const [closingSale, setClosingSale] = useState(false);
 
   function defaultDeadlineDate() {
     const d = new Date();
@@ -1365,10 +1367,22 @@ function SalesManagementTab({ app }) {
     setNewSale(freshNewSaleForm());
   }
 
-  async function handleCloseSale() {
+  function handleCloseSale() {
     if (!currentSale) return;
-    if (!confirm(`לסגור את "${currentSale.name}" להזמנות חדשות?`)) return;
-    await app.closeSale(currentSale.id);
+    setConfirmingClose(true);
+  }
+
+  async function handleConfirmCloseSale() {
+    if (!currentSale || closingSale) return;
+    setClosingSale(true);
+    try {
+      await app.closeSale(currentSale.id);
+      setConfirmingClose(false);
+    } catch (err) {
+      console.error('closeSale failed', err);
+    } finally {
+      setClosingSale(false);
+    }
   }
 
   function handleDuplicate(sourceId) {
@@ -1464,6 +1478,29 @@ function SalesManagementTab({ app }) {
           )}
         </div>
       </Card>
+
+      {confirmingClose && currentSale && (
+        <Modal
+          title="סגירת מכירה"
+          onClose={() => {
+            if (!closingSale) setConfirmingClose(false);
+          }}
+          footer={
+            <>
+              <Button variant="ghost" className="flex-1" onClick={() => setConfirmingClose(false)} disabled={closingSale}>
+                ביטול
+              </Button>
+              <Button className="flex-1" onClick={handleConfirmCloseSale} disabled={closingSale}>
+                {closingSale ? 'סוגר…' : 'סגור מכירה'}
+              </Button>
+            </>
+          }
+        >
+          <p className="text-sm text-stone-600">
+            האם אתה בטוח שברצונך לסגור את המכירה "{currentSale.name}" להזמנות חדשות?
+          </p>
+        </Modal>
+      )}
     </div>
   );
 }
