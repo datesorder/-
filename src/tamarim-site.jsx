@@ -463,7 +463,7 @@ function CustomerView({ onSubmitOrder, onGoAdmin }) {
     return '';
   }
 
-  async function doSubmit({ markPaid = false, openPaymentAfter = false } = {}) {
+  async function doSubmit({ markPaid = false } = {}) {
     if (submitting) return; // מונע הזמנה כפולה בלחיצה כפולה/מהירה
     const err = validate();
     if (err) {
@@ -476,9 +476,6 @@ function CustomerView({ onSubmitOrder, onGoAdmin }) {
       const order = await onSubmitOrder({ ...form, amount, markPaid, sale });
       setLastOrder(order);
       setStep('confirmation');
-      if (openPaymentAfter && paymentLink) {
-        window.open(paymentLink, '_blank', 'noreferrer');
-      }
     } catch (err2) {
       console.error('order submit failed', err2);
       if (err2 && err2.message === 'SALE_CLOSED') {
@@ -496,12 +493,19 @@ function CustomerView({ onSubmitOrder, onGoAdmin }) {
     await doSubmit({ markPaid: false });
   }
 
-  // Bit/PayBox: לחיצה על כפתור התשלום שולחת את ההזמנה אוטומטית ומסמנת
-  // אותה כ"שולם" (דיווח הלקוח, לא אימות טכני), ואז פותחת את קישור התשלום
-  // ישירות בלשונית/חלון חדש - בלי ליצור about:blank ולנווט אליו בנפרד.
+  // Bit/PayBox: פותחים את קישור התשלום מיד, בצורה סינכרונית בתוך אותה
+  // לחיצה - לפני כל await. אם פותחים את החלון רק אחרי await (אחרי שליחת
+  // ההזמנה), חלק מהדפדפנים - בעיקר בנייד - כבר לא מקשרים בין הלחיצה
+  // לפתיחה, וזה גורם לטאב/חלון ריק (about:blank) להיפתח בנוסף לקישור
+  // עצמו. paymentLink כבר ידוע במלואו בשלב הזה - הכפתור הזה בכלל לא
+  // מוצג כשאין עדיין קישור תשלום מוגדר - כך שאין צורך "לפתוח ריק"
+  // ולנווט מאוחר יותר; פותחים ישר עם הכתובת הסופית והנכונה.
   async function handlePayAndSubmit() {
     if (submitting) return;
-    await doSubmit({ markPaid: true, openPaymentAfter: true });
+    if (paymentLink) {
+      window.open(paymentLink, '_blank', 'noreferrer');
+    }
+    await doSubmit({ markPaid: true });
   }
 
   if (step === 'confirmation' && lastOrder) {
@@ -1683,19 +1687,19 @@ function SettingsTab({ app }) {
           שכבר קיימות. כל מדרגה קובעת מחיר ליחידה החל מכמות מסוימת ומעלה.
         </p>
         {form.defaultPrices.tiers.map((tier, i) => (
-          <div key={i} className="flex items-center gap-3">
+          <div key={i} className="flex flex-wrap items-center gap-2 sm:gap-3">
             <span className="shrink-0 text-sm text-stone-600">החל מ-</span>
             <input
               type="number"
               min={1}
-              className={inputCls}
+              className="w-20 shrink-0 rounded-xl border border-stone-300 bg-white px-3 py-2.5 text-base text-stone-800 placeholder:text-stone-400 focus:border-amber-800 focus:outline-none focus:ring-2 focus:ring-amber-800/15 transition"
               value={tier.minQty}
               onChange={(e) => updateTier(i, 'minQty', e.target.value)}
             />
             <span className="shrink-0 text-sm text-stone-600">קופסאות →</span>
             <input
               type="number"
-              className={inputCls}
+              className="w-24 shrink-0 rounded-xl border border-stone-300 bg-white px-3 py-2.5 text-base text-stone-800 placeholder:text-stone-400 focus:border-amber-800 focus:outline-none focus:ring-2 focus:ring-amber-800/15 transition"
               value={tier.pricePerUnit}
               onChange={(e) => updateTier(i, 'pricePerUnit', e.target.value)}
             />
