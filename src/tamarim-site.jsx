@@ -58,6 +58,37 @@ function isSaleAcceptingOrders(sale) {
   return !!(sale && sale.status === 'open' && !isDeadlinePassed(sale));
 }
 
+// מוסיף n ימים קלנדריים למחרוזת תאריך "YYYY-MM-DD", ומחזיר מחרוזת תאריך
+// חדשה באותו פורמט. עובד ב-UTC פנימית רק כדי להימנע מבעיות שעון-קיץ
+// באריתמטיקת התאריכים עצמה - זה עדיין חישוב על תאריך בלבד, לא על זמן.
+function addDaysToDateString(dateStr, days) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().slice(0, 10);
+}
+
+// "היום" כמחרוזת "YYYY-MM-DD" לפי השעון המקומי (לא UTC) - זה מה שהמשתמש
+// עצמו נחשב אצלו "היום".
+function todayDateString() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+// מכירה נחשבת "היסטורית" (מוצגת ב-HistoryTab) רק אחרי שעברו יומיים
+// מלאים אחרי יום האיסוף - כלומר pickup_date + 3 ימים קלנדריים <= היום.
+// סטטוס (open/closed) לא משנה כלל - סגירה ידנית לא הופכת מכירה להיסטורית
+// לפני זמנה. מכירות ישנות בלי pickup_date (מלפני שהשדה נוסף) ממשיכות
+// להיחשב היסטוריות תמיד, כדי לא "לאבד" אותן מהתצוגה.
+function isSaleHistorical(sale) {
+  if (!sale || !sale.pickupDate) return true;
+  const historicalFrom = addDaysToDateString(sale.pickupDate, 3);
+  return historicalFrom <= todayDateString();
+}
+
 const fmtDeadline = (iso) =>
   iso
     ? new Date(iso).toLocaleString('he-IL', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
@@ -202,6 +233,7 @@ function buildSaleReportWorkbook(sale, orders) {
     ['דוח מכירה', sale.name],
     ['נפתחה', fmtDateTime(sale.openDate)],
     ['דדליין הזמנות', sale.deadline ? fmtDeadline(sale.deadline) : 'לא הוגדר'],
+    ['תאריך איסוף', sale.pickupDate ? fmtDate(sale.pickupDate) : 'לא הוגדר'],
     ['סטטוס', sale.status === 'open' ? 'פתוחה' : 'סגורה'],
     [],
     ['מספר הזמנות (לא כולל בוטלו)', active.length],
@@ -523,6 +555,7 @@ function CustomerView({ onSubmitOrder, onGoAdmin }) {
         {sale && sale.deadline && sale.status === 'open' && !deadlinePassed && (
           <p className="mt-2 text-xs text-amber-200">ניתן להזמין עד {fmtDeadline(sale.deadline)}</p>
         )}
+        {sale && sale.pickupDate && <p className="mt-1 text-xs text-amber-200">איסוף בתאריך {fmtDate(sale.pickupDate)}</p>}
       </div>
 
       {saleLoading || publicSettingsLoading ? (
@@ -819,6 +852,15 @@ function DashboardTab({ app, goOrders }) {
     return { count: active.length, packages, revenue, paid, pending: revenue - paid, pendingCount: pendingOrders.length, pendingPickupCount: pendingPickup.length, deliveredCount: delivered.length };
   }, [orders]);
 
+  // הזמנות שתאריך האיסוף של המכירה שלהן כבר הגיע/עבר, ועדיין לא סומנו
+  // כנמסרו (pending_pickup). התראה מקומית בצד הלקוח בלבד - אין טבלה/RPC
+  // חדשים, רק חישוב מהנתונים שכבר קיימים כאן (sale + orders).
+  const overduePickupOrders = useMemo(() => {
+    if (!sale || !sale.pickupDate) return [];
+    if (sale.pickupDate > todayDateString()) return [];
+    return orders.filter((o) => o.orderStatus === 'pending_pickup');
+  }, [orders, sale]);
+
   const stockRemaining = sale ? computeStockRemaining(sale, orders) : null;
 
   if (!sale) {
@@ -836,8 +878,27 @@ function DashboardTab({ app, goOrders }) {
         <p className="text-xs text-stone-400">
           נפתחה {fmtDate(sale.openDate)} · <Badge tone={sale.status === 'open' ? 'green' : 'stone'}>{sale.status === 'open' ? 'פתוחה' : 'סגורה'}</Badge>
           {sale.deadline && ` · דדליין הזמנות: ${fmtDeadline(sale.deadline)}`}
+          {` · תאריך איסוף: ${sale.pickupDate ? fmtDate(sale.pickupDate) : 'לא הוגדר'}`}
         </p>
       </div>
+
+      {overduePickupOrders.length > 0 && (
+        <Card className="border-2 border-rose-300 bg-rose-50 p-4">
+          <h3 className="text-sm font-semibold text-rose-800">
+            הזמנות שתאריך האיסוף שלהן הגיע/עבר ועדיין לא נאספו ({overduePickupOrders.length})
+          </h3>
+          <ul className="mt-2 space-y-1">
+            {overduePickupOrders.map((o) => (
+              <li key={o.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white/70 px-3 py-2 text-sm text-rose-900">
+                <span>
+                  {o.orderNumber} · {o.firstName} {o.lastName}
+                </span>
+                <span className="text-xs text-rose-700">איסוף: {fmtDate(sale.pickupDate)} · טרם נאסף</span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <StatCard label="הזמנות" value={stats.count} />
@@ -1227,8 +1288,13 @@ function HistoryTab({ app }) {
           return merged;
         });
 
+        // מכירה נחשבת "היסטורית" רק לפי pickup_date (+ 3 ימים קלנדריים) -
+        // לא לפי status/deadline/סגירה ידנית. מכירות ישנות בלי pickup_date
+        // ממשיכות תמיד להיחשב היסטוריות (isSaleHistorical מטפלת בזה).
+        const historicalSales = sales.filter(isSaleHistorical);
+
         const list = [];
-        for (const sale of sales) {
+        for (const sale of historicalSales) {
           const orders = app.loadedSaleIds.has(sale.id) ? app.ordersBySaleId[sale.id] : (await app.loadOrdersForSale(sale.id));
           const activeOrders = (orders || []).filter((o) => o.orderStatus !== 'cancelled');
           list.push({
@@ -1314,6 +1380,7 @@ function SalesManagementTab({ app }) {
       closeCurrent: true,
       deadlineDate: defaultDeadlineDate(),
       deadlineTime: '20:00',
+      pickupDate: defaultDeadlineDate(),
       sourcePricesId: null,
       sourceLabel: '',
     };
@@ -1354,6 +1421,16 @@ function SalesManagementTab({ app }) {
       setNewSaleError('תאריך/שעה לא תקינים');
       return;
     }
+    if (!newSale.pickupDate) {
+      setNewSaleError('יש להגדיר תאריך איסוף');
+      return;
+    }
+    // השוואה לפי תאריך בלבד (מחרוזות YYYY-MM-DD, ללא רכיב שעה) - בדיוק
+    // כפי שנדרש, ללא תלות באזור זמן.
+    if (newSale.pickupDate < newSale.deadlineDate) {
+      setNewSaleError('תאריך האיסוף לא יכול להיות לפני מועד סיום ההזמנות');
+      return;
+    }
     setNewSaleError('');
     const sourcePrices = newSale.sourcePricesId ? otherSales.find((s) => s.id === newSale.sourcePricesId)?.prices : null;
     await app.createSale({
@@ -1363,6 +1440,7 @@ function SalesManagementTab({ app }) {
       closeCurrent: newSale.closeCurrent,
       prices: sourcePrices || undefined,
       deadline: deadline.toISOString(),
+      pickupDate: newSale.pickupDate,
     });
     setNewSale(freshNewSaleForm());
   }
@@ -1413,6 +1491,7 @@ function SalesManagementTab({ app }) {
                 <div className="text-xs text-stone-400">
                   נפתחה {fmtDate(currentSale.openDate)}
                   {currentSale.deadline && ` · דדליין הזמנות: ${fmtDeadline(currentSale.deadline)}`}
+                  {` · תאריך איסוף: ${currentSale.pickupDate ? fmtDate(currentSale.pickupDate) : 'לא הוגדר'}`}
                 </div>
               </div>
               <Button variant="secondary" onClick={handleCloseSale}>סגירת מכירה</Button>
@@ -1445,6 +1524,9 @@ function SalesManagementTab({ app }) {
               <input type="time" className={inputCls} value={newSale.deadlineTime} onChange={(e) => setNewSale((s) => ({ ...s, deadlineTime: e.target.value }))} />
             </Field>
           </div>
+          <Field label="תאריך איסוף">
+            <input type="date" className={inputCls} value={newSale.pickupDate} onChange={(e) => setNewSale((s) => ({ ...s, pickupDate: e.target.value }))} />
+          </Field>
           <label className="flex items-center gap-2 text-sm text-stone-600">
             <input type="checkbox" checked={newSale.stockEnabled} onChange={(e) => setNewSale((s) => ({ ...s, stockEnabled: e.target.checked }))} />
             הגבלת מלאי אריזות
@@ -1843,7 +1925,7 @@ export default function App() {
   }, []);
 
   const createSale = useCallback(
-    async ({ name, stockEnabled, stockTotal, closeCurrent, prices, deadline }) => {
+    async ({ name, stockEnabled, stockTotal, closeCurrent, prices, deadline, pickupDate }) => {
       // עותק קבוע של המחירים בזמן פתיחת המכירה - זו הפעולה המקבילה ל-
       // "sale.prices := settings.default_prices" שכבר קיימת בפועל בתוך
       // admin_create_sale() בצד השרת. כשלא מועברים prices מפורשים (מכירה
@@ -1865,6 +1947,7 @@ export default function App() {
         stockEnabled: !!stockEnabled,
         stockTotal: Number(stockTotal) || 0,
         closeCurrent: !!closeCurrent,
+        pickupDate: pickupDate || null,
       });
       const nextIndex = [sale.id, ...salesIndex];
       setSalesIndex(nextIndex);
