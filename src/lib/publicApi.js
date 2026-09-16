@@ -37,6 +37,7 @@ export async function getPublicSettings() {
     payboxLink: row.paybox_link,
     customerIntro: row.customer_intro,
     pickupInfo: row.pickup_info,
+    siteName: row.site_name,
   }
 }
 
