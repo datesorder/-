@@ -553,7 +553,7 @@ function CustomerView({ onSubmitOrder, onGoAdmin }) {
   return (
     <div className="mx-auto max-w-md px-4 pb-16">
       <div className="mt-6 rounded-2xl bg-gradient-to-b from-amber-900 to-amber-800 px-6 py-10 text-center text-amber-50">
-        <h1 className="tmr-display text-4xl leading-tight">תמרים טריים להזמנה</h1>
+        <h1 className="tmr-display text-4xl leading-tight">{publicSettings?.siteName || 'מכירת תמרים טריים'}</h1>
         <p className="mt-3 text-sm leading-relaxed text-amber-100/90">{publicSettings?.customerIntro}</p>
         {sale && <p className="mt-4 inline-block rounded-full bg-amber-950/30 px-3 py-1 text-xs font-medium text-amber-100">{sale.name}</p>}
         {sale && sale.deadline && sale.status === 'open' && !deadlinePassed && (
@@ -1654,6 +1654,12 @@ function SettingsTab({ app }) {
 
   return (
     <div className="space-y-6">
+      <Card className="space-y-4 p-5">
+        <h3 className="text-sm font-semibold text-stone-800">שם האתר</h3>
+        <Field label="שם האתר">
+          <input className={inputCls} value={form.siteName} onChange={(e) => update('siteName', e.target.value)} />
+        </Field>
+      </Card>
       <Card className="space-y-4 p-5">
         <h3 className="text-sm font-semibold text-stone-800">פרטי מוכר</h3>
         <Field label="שם המוכר">
