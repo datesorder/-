@@ -8,7 +8,7 @@ import { supabase } from './supabaseClient'
 export async function adminGetSettings() {
   const { data, error } = await supabase
     .from('settings')
-    .select('id, seller_name, phone, customer_intro, pickup_info, bit_link, paybox_link, default_prices')
+    .select('id, seller_name, phone, customer_intro, pickup_info, bit_link, paybox_link, default_prices, site_name')
     .limit(1)
     .single()
 
@@ -25,6 +25,7 @@ export async function adminGetSettings() {
     bitLink: data.bit_link,
     payboxLink: data.paybox_link,
     defaultPrices: data.default_prices,
+    siteName: data.site_name,
   }
 }
 
@@ -39,6 +40,7 @@ export async function adminSaveSettings(settings) {
       bit_link: settings.bitLink,
       paybox_link: settings.payboxLink,
       default_prices: settings.defaultPrices,
+      site_name: settings.siteName,
     })
     .eq('id', settings.id)
 
