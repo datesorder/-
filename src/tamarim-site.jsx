@@ -464,11 +464,11 @@ function CustomerView({ onSubmitOrder, onGoAdmin }) {
   }
 
   async function doSubmit({ markPaid = false } = {}) {
-    if (submitting) return; // מונע הזמנה כפולה בלחיצה כפולה/מהירה
+    if (submitting) return false; // מונע הזמנה כפולה בלחיצה כפולה/מהירה
     const err = validate();
     if (err) {
       setError(err);
-      return;
+      return false;
     }
     setError('');
     setSubmitting(true);
@@ -476,6 +476,7 @@ function CustomerView({ onSubmitOrder, onGoAdmin }) {
       const order = await onSubmitOrder({ ...form, amount, markPaid, sale });
       setLastOrder(order);
       setStep('confirmation');
+      return true;
     } catch (err2) {
       console.error('order submit failed', err2);
       if (err2 && err2.message === 'SALE_CLOSED') {
@@ -483,6 +484,7 @@ function CustomerView({ onSubmitOrder, onGoAdmin }) {
       } else {
         setError('אירעה שגיאה בשליחת ההזמנה. נסו שוב, ואם זה חוזר על עצמו אפשר לפנות אלינו בטלפון.');
       }
+      return false;
     } finally {
       setSubmitting(false);
     }
@@ -493,19 +495,17 @@ function CustomerView({ onSubmitOrder, onGoAdmin }) {
     await doSubmit({ markPaid: false });
   }
 
-  // Bit/PayBox: פותחים את קישור התשלום מיד, בצורה סינכרונית בתוך אותה
-  // לחיצה - לפני כל await. אם פותחים את החלון רק אחרי await (אחרי שליחת
-  // ההזמנה), חלק מהדפדפנים - בעיקר בנייד - כבר לא מקשרים בין הלחיצה
-  // לפתיחה, וזה גורם לטאב/חלון ריק (about:blank) להיפתח בנוסף לקישור
-  // עצמו. paymentLink כבר ידוע במלואו בשלב הזה - הכפתור הזה בכלל לא
-  // מוצג כשאין עדיין קישור תשלום מוגדר - כך שאין צורך "לפתוח ריק"
-  // ולנווט מאוחר יותר; פותחים ישר עם הכתובת הסופית והנכונה.
+  // Bit/PayBox: ההזמנה נוצרת קודם (await), ורק בהצלחה מנווטים לקישור
+  // התשלום - באותו חלון (window.location.href), לא בטאב/חלון חדש. ניווט
+  // באותו חלון אינו כפוף לחסימת popup-blocker (זה לא window.open), ולכן
+  // בטוח לבצע אותו אחרי await בלי סיכון שהוא ייחסם - וגם לא נוצר טאב
+  // about:blank מיותר, כי אין יצירת חלון/טאב בכלל.
   async function handlePayAndSubmit() {
     if (submitting) return;
-    if (paymentLink) {
-      window.open(paymentLink, '_blank', 'noreferrer');
+    const ok = await doSubmit({ markPaid: true });
+    if (ok && paymentLink) {
+      window.location.href = paymentLink;
     }
-    await doSubmit({ markPaid: true });
   }
 
   if (step === 'confirmation' && lastOrder) {
@@ -523,7 +523,7 @@ function CustomerView({ onSubmitOrder, onGoAdmin }) {
             <div className="flex justify-between"><span className="text-stone-500">אמצעי תשלום</span><span className="font-medium">{PAYMENT_METHODS.find((m) => m.v === lastOrder.paymentMethod)?.label}</span></div>
           </div>
           {link && (
-            <a href={link} target="_blank" rel="noreferrer" className="mt-4 block">
+            <a href={link} rel="noreferrer" className="mt-4 block">
               <Button className="w-full">תשלום ב-{PAYMENT_METHODS.find((m) => m.v === lastOrder.paymentMethod)?.label}</Button>
             </a>
           )}
