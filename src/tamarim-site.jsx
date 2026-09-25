@@ -58,18 +58,9 @@ function isSaleAcceptingOrders(sale) {
   return !!(sale && sale.status === 'open' && !isDeadlinePassed(sale));
 }
 
-// מוסיף n ימים קלנדריים למחרוזת תאריך "YYYY-MM-DD", ומחזיר מחרוזת תאריך
-// חדשה באותו פורמט. עובד ב-UTC פנימית רק כדי להימנע מבעיות שעון-קיץ
-// באריתמטיקת התאריכים עצמה - זה עדיין חישוב על תאריך בלבד, לא על זמן.
-function addDaysToDateString(dateStr, days) {
-  const [y, m, d] = dateStr.split('-').map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  dt.setUTCDate(dt.getUTCDate() + days);
-  return dt.toISOString().slice(0, 10);
-}
-
 // "היום" כמחרוזת "YYYY-MM-DD" לפי השעון המקומי (לא UTC) - זה מה שהמשתמש
-// עצמו נחשב אצלו "היום".
+// עצמו נחשב אצלו "היום". עדיין בשימוש להצגת/התראת pickup_date (לא לקביעת
+// מחזור החיים - ראו isSaleFullyHandled/getSaleLifecycleStage למטה).
 function todayDateString() {
   const now = new Date();
   const y = now.getFullYear();
@@ -78,15 +69,24 @@ function todayDateString() {
   return `${y}-${m}-${d}`;
 }
 
-// מכירה נחשבת "היסטורית" (מוצגת ב-HistoryTab) רק אחרי שעברו יומיים
-// מלאים אחרי יום האיסוף - כלומר pickup_date + 3 ימים קלנדריים <= היום.
-// סטטוס (open/closed) לא משנה כלל - סגירה ידנית לא הופכת מכירה להיסטורית
-// לפני זמנה. מכירות ישנות בלי pickup_date (מלפני שהשדה נוסף) ממשיכות
-// להיחשב היסטוריות תמיד, כדי לא "לאבד" אותן מהתצוגה.
-function isSaleHistorical(sale) {
-  if (!sale || !sale.pickupDate) return true;
-  const historicalFrom = addDaysToDateString(sale.pickupDate, 3);
-  return historicalFrom <= todayDateString();
+// הזמנה נחשבת "מטופלת": בוטלה (cancelled - לא חוסמת בכלל), או שנמסרה
+// וגם שולמה. מכירה בלי אף הזמנה נחשבת מטופלת במלואה (כלל "0 הזמנות").
+function isSaleFullyHandled(orders) {
+  const relevant = (orders || []).filter((o) => o.orderStatus !== 'cancelled');
+  if (relevant.length === 0) return true;
+  return relevant.every((o) => o.orderStatus === 'delivered' && o.paymentStatus === 'paid');
+}
+
+// שלב מחזור החיים של מכירה בממשק - "open" (עדיין status='open') /
+// "ended" (נסגרה, אבל יש הזמנה אחת לפחות שלא טופלה) / "history" (נסגרה
+// וכל ההזמנות טופלו, כולל מכירה בלי הזמנות בכלל). זהו מצב מחושב תמיד
+// מהנתונים הנוכחיים (status + orders) - לא נשמר בשום מקום ב-DB, ולכן
+// מתעדכן אוטומטית ברגע שסטטוס הזמנה משתנה. pickup_date אינו חלק מהחישוב
+// הזה בכלל - הוא נשאר לשימוש בתצוגה/בהתראות הקיימות בלבד.
+function getSaleLifecycleStage(sale, orders) {
+  if (!sale) return null;
+  if (sale.status === 'open') return 'open';
+  return isSaleFullyHandled(orders) ? 'history' : 'ended';
 }
 
 const fmtDeadline = (iso) =>
@@ -794,9 +794,20 @@ function AdminView({ app }) {
   const [tab, setTab] = useState('dashboard');
   const [ordersFilterPreset, setOrdersFilterPreset] = useState(null);
 
+  // טוענים את רשימת המכירות הסגורות (ל"מכירות שהסתיימו"/היסטוריה) פעם
+  // אחת בכניסה לאזור הניהול, ללא תלות באיזה טאב פתוח קודם - כך ש-Dashboard
+  // ו-SalesManagementTab יוכלו להציג מיד את מי שדורש טיפול.
+  useEffect(() => {
+    app.loadClosedSales();
+  }, []);
+
   function goOrders(preset) {
     setOrdersFilterPreset(preset || null);
     setTab('orders');
+  }
+
+  function goSales() {
+    setTab('sales');
   }
 
   return (
@@ -822,7 +833,7 @@ function AdminView({ app }) {
         ))}
       </div>
 
-      {tab === 'dashboard' && <DashboardTab app={app} goOrders={goOrders} />}
+      {tab === 'dashboard' && <DashboardTab app={app} goOrders={goOrders} goSales={goSales} />}
       {tab === 'orders' && <OrdersTab app={app} saleId={app.currentSaleId} initialPreset={ordersFilterPreset} />}
       {tab === 'history' && <HistoryTab app={app} />}
       {tab === 'sales' && <SalesManagementTab app={app} />}
@@ -841,9 +852,34 @@ function StatCard({ label, value, sub }) {
   );
 }
 
-function DashboardTab({ app, goOrders }) {
+function DashboardTab({ app, goOrders, goSales }) {
   const sale = app.currentSaleId ? app.salesById[app.currentSaleId] : null;
   const orders = app.currentSaleId ? app.ordersBySaleId[app.currentSaleId] || [] : [];
+
+  // מכירות "שהסתיימו" (closed, אבל יש הזמנה שלא טופלה) - מוצג תמיד,
+  // גם כשקיימת מכירה פתוחה וגם כשלא, כדי שלא "ייעלמו" מהמנהל. מחשבים
+  // רק עבור מכירות שההזמנות שלהן כבר נטענו (app.loadedSaleIds) - כדי לא
+  // לסווג מכירה בטעות לפני שההזמנות שלה בכלל הגיעו מ-Supabase.
+  const endedSalesCount = useMemo(() => {
+    return (app.closedSaleIds || []).filter((id) => {
+      if (!app.loadedSaleIds.has(id)) return false;
+      const s = app.salesById[id];
+      return getSaleLifecycleStage(s, app.ordersBySaleId[id]) === 'ended';
+    }).length;
+  }, [app.closedSaleIds, app.salesById, app.ordersBySaleId, app.loadedSaleIds]);
+
+  const endedSalesBanner = endedSalesCount > 0 && (
+    <Card className="border-2 border-amber-300 bg-amber-50 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold text-amber-900">
+          {endedSalesCount} מכירות שהסתיימו ועדיין דורשות טיפול
+        </h3>
+        <Button variant="secondary" onClick={goSales}>
+          למעבר לטיפול
+        </Button>
+      </div>
+    </Card>
+  );
 
   const stats = useMemo(() => {
     const active = orders.filter((o) => o.orderStatus !== 'cancelled');
@@ -869,14 +905,18 @@ function DashboardTab({ app, goOrders }) {
 
   if (!sale) {
     return (
-      <Card className="p-6 text-center text-stone-500">
-        אין כרגע מכירה פתוחה. אפשר לפתוח מכירה חדשה בעמוד ההגדרות.
-      </Card>
+      <div className="space-y-5">
+        {endedSalesBanner}
+        <Card className="p-6 text-center text-stone-500">
+          אין כרגע מכירה פתוחה. אפשר לפתוח מכירה חדשה בעמוד ההגדרות.
+        </Card>
+      </div>
     );
   }
 
   return (
     <div className="space-y-5">
+      {endedSalesBanner}
       <div>
         <h2 className="text-base font-semibold text-stone-800">{sale.name}</h2>
         <p className="text-xs text-stone-400">
@@ -1292,14 +1332,17 @@ function HistoryTab({ app }) {
           return merged;
         });
 
-        // מכירה נחשבת "היסטורית" רק לפי pickup_date (+ 3 ימים קלנדריים) -
-        // לא לפי status/deadline/סגירה ידנית. מכירות ישנות בלי pickup_date
-        // ממשיכות תמיד להיחשב היסטוריות (isSaleHistorical מטפלת בזה).
-        const historicalSales = sales.filter(isSaleHistorical);
+        // מכירה נחשבת "היסטורית" רק אם היא closed וכל ההזמנות שלה טופלו
+        // (getSaleLifecycleStage) - לא לפי pickup_date יותר. בניגוד ל-status
+        // בלבד, זה דורש את ההזמנות של כל מכירה סגורה, אז טוענים אותן (תוך
+        // שימוש מלא ב-cache המשותף - app.loadedSaleIds/app.ordersBySaleId -
+        // כדי לא לבצע fetch כפול למכירה שכבר נטענה על ידי App/טאב אחר).
+        const closedSales = sales.filter((s) => s.status === 'closed');
 
         const list = [];
-        for (const sale of historicalSales) {
+        for (const sale of closedSales) {
           const orders = app.loadedSaleIds.has(sale.id) ? app.ordersBySaleId[sale.id] : (await app.loadOrdersForSale(sale.id));
+          if (getSaleLifecycleStage(sale, orders) !== 'history') continue;
           const activeOrders = (orders || []).filter((o) => o.orderStatus !== 'cancelled');
           list.push({
             id: sale.id,
@@ -1369,6 +1412,7 @@ function SalesManagementTab({ app }) {
   const [newSaleError, setNewSaleError] = useState('');
   const [confirmingClose, setConfirmingClose] = useState(false);
   const [closingSale, setClosingSale] = useState(false);
+  const [drillSaleId, setDrillSaleId] = useState(null);
 
   function defaultDeadlineDate() {
     const d = new Date();
@@ -1413,6 +1457,31 @@ function SalesManagementTab({ app }) {
   }, []);
 
   const currentSale = app.currentSaleId ? app.salesById[app.currentSaleId] : null;
+
+  // מכירות "שהסתיימו" (closed, עם הזמנה אחת לפחות שלא טופלה) - מטופלות
+  // כאן ולא רק כבורר שכפול. מחשבים רק עבור מכירות שההזמנות שלהן כבר
+  // נטענו (app.loadedSaleIds, נטען ברמת App על ידי app.loadClosedSales).
+  const endedSales = useMemo(() => {
+    return (app.closedSaleIds || [])
+      .filter((id) => app.loadedSaleIds.has(id))
+      .map((id) => app.salesById[id])
+      .filter((s) => s && getSaleLifecycleStage(s, app.ordersBySaleId[s.id]) === 'ended')
+      .sort((a, b) => new Date(b.openDate) - new Date(a.openDate));
+  }, [app.closedSaleIds, app.salesById, app.ordersBySaleId, app.loadedSaleIds]);
+
+  if (drillSaleId) {
+    return (
+      <OrdersTab
+        app={app}
+        saleId={drillSaleId}
+        readOnlyBanner={
+          <Button variant="ghost" onClick={() => setDrillSaleId(null)}>
+            ← חזרה למכירות שהסתיימו
+          </Button>
+        }
+      />
+    );
+  }
 
   async function handleOpenSale() {
     if (!newSale.name.trim()) return;
@@ -1564,6 +1633,30 @@ function SalesManagementTab({ app }) {
           )}
         </div>
       </Card>
+
+      {endedSales.length > 0 && (
+        <Card className="p-5">
+          <h3 className="text-sm font-semibold text-stone-800">מכירות שהסתיימו</h3>
+          <p className="mt-1 text-xs text-stone-400">
+            נסגרו להזמנות, אבל יש בהן עדיין הזמנה שלא נמסרה ו/או לא שולמה. הן יעברו להיסטוריה אוטומטית ברגע שכל ההזמנות שלהן יטופלו.
+          </p>
+          <div className="mt-3 space-y-2">
+            {endedSales.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => setDrillSaleId(s.id)}
+                className="flex w-full items-center justify-between gap-3 rounded-xl border border-stone-200 bg-white p-3 text-right hover:border-amber-800"
+              >
+                <div>
+                  <div className="text-sm font-medium text-stone-800">{s.name}</div>
+                  <div className="text-xs text-stone-400">נפתחה {fmtDate(s.openDate)}</div>
+                </div>
+                <span className="text-xs text-amber-800">לטיפול ←</span>
+              </button>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {confirmingClose && currentSale && (
         <Modal
@@ -1870,6 +1963,53 @@ export default function App() {
     return orders;
   }, []);
 
+  // ---- מכירות סגורות ("מכירות שהסתיימו" / "היסטוריה") ----
+  // כדי לסווג מכירה סגורה (ended/history) צריך את ההזמנות שלה, לא רק את
+  // ה-status. הטעינה כאן היא ברמת App (לא בתוך כל טאב בנפרד) כדי שכל
+  // הצרכנים (Dashboard, SalesManagementTab, HistoryTab) ישתמשו באותו
+  // cache משותף (salesById/ordersBySaleId/loadedSaleIds) ולא יבצעו כל אחד
+  // fetch נפרד לאותן מכירות/הזמנות.
+  const [closedSaleIds, setClosedSaleIds] = useState([]);
+  const closedSalesLoadedRef = useRef(false);
+  const closedOrdersRequestedRef = useRef(new Set());
+
+  // שולפת את כל המכירות (limit: null, בדיוק כמו ש-HistoryTab כבר עשה),
+  // ממזגת אותן ל-salesById המשותף, ושומרת בנפרד רק את ה-IDs של מכירות
+  // סגורות. פעם אחת בלבד לכל טעינת עמוד (מוגן ב-ref) - זה fetch יחיד,
+  // לא N+1, ומרוענן רק ב-refresh מלא של הדף.
+  const loadClosedSales = useCallback(async () => {
+    if (closedSalesLoadedRef.current) return;
+    closedSalesLoadedRef.current = true;
+    try {
+      const allSales = await adminListSales({ limit: null });
+      setSalesById((m) => {
+        const merged = { ...m };
+        for (const sale of allSales) merged[sale.id] = sale;
+        return merged;
+      });
+      setClosedSaleIds(allSales.filter((s) => s.status === 'closed').map((s) => s.id));
+    } catch (err) {
+      console.warn('loadClosedSales failed', err);
+      closedSalesLoadedRef.current = false; // כשל אמיתי - מאפשרים ניסיון חוזר בעתיד
+    }
+  }, []);
+
+  // ברגע שיש רשימת מכירות סגורות, טוענים את ההזמנות של כל אחת שעוד לא
+  // נטענה (כדי שאפשר יהיה לחשב עבורה getSaleLifecycleStage). כל מכירה
+  // מתבקשת פעם אחת בלבד (closedOrdersRequestedRef) - גם אם האפקט רץ שוב
+  // בגלל עדכון state, לא נשלחת בקשת Supabase כפולה לאותה מכירה.
+  useEffect(() => {
+    const toLoad = closedSaleIds.filter(
+      (id) => !loadedSaleIds.has(id) && !closedOrdersRequestedRef.current.has(id)
+    );
+    if (!toLoad.length) return;
+    toLoad.forEach((id) => closedOrdersRequestedRef.current.add(id));
+    Promise.all(toLoad.map((id) => loadOrdersForSale(id))).catch((err) => {
+      console.warn('loading orders for closed sales failed', err);
+      toLoad.forEach((id) => closedOrdersRequestedRef.current.delete(id)); // מאפשר ניסיון חוזר
+    });
+  }, [closedSaleIds, loadedSaleIds, loadOrdersForSale]);
+
   // הצד הציבורי: יצירת הזמנה עוברת עכשיו דרך create_order() ב-Supabase
   // (RPC). sale מגיע מה-formData (נטען ב-CustomerView עצמו דרך
   // get_open_sale()) - לא מ-salesById/currentSaleId המשותפים, כדי לשמור
@@ -1990,6 +2130,8 @@ export default function App() {
     ordersBySaleId,
     loadedSaleIds,
     currentSaleId,
+    closedSaleIds,
+    loadClosedSales,
     loadOrdersForSale,
     updateOrder,
     bulkUpdateOrders,
