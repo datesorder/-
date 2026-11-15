@@ -680,7 +680,7 @@ function CustomerView({ onSubmitOrder, onGoAdmin }) {
                 {paymentLink ? (
                   <>
                     <p className="text-sm font-medium leading-relaxed text-amber-900">
-                      לחיצה על הכפתור תשלח את ההזמנה ותפתח את עמוד התשלום. הסימון כ"שולם" מבוסס על הדיווח שלכם ולא על אימות טכני מול {form.paymentMethod === 'bit' ? 'Bit' : 'PayBox'}.
+                      {form.paymentMethod === 'bit' ? 'לחץ לשליחת ההזמנה ומעבר לתשלום בביט' : 'לחץ לשליחת ההזמנה ומעבר לתשלום ב-PayBox'}
                     </p>
                     <Button type="button" variant="secondary" className="w-full" disabled={submitting} onClick={handlePayAndSubmit}>
                       {submitting ? 'שולח…' : `לתשלום ב-${form.paymentMethod === 'bit' ? 'Bit' : 'PayBox'}`}
