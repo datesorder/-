@@ -126,9 +126,7 @@ function toWhatsAppPhone(phone) {
 function waLinkForOrder(order, settings) {
   const phone = toWhatsAppPhone(order.phone);
   if (!phone) return null;
-  const text = `שלום ${order.firstName}, לגבי הזמנת התמרים שלך (מספר הזמנה ${order.orderNumber}) - כמות: ${order.qty} אריזות, סכום לתשלום: ${fmtCurrency(
-    order.amount
-  )}. תודה, ${settings.sellerName || ''}`.trim();
+  const text = 'היי, זה יובל מהתמרים. ההזמנה שלך מוכנה, אפשר להגיע לאסוף';
   return `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
 }
 
@@ -553,7 +551,7 @@ function CustomerView({ onSubmitOrder, onGoAdmin }) {
   return (
     <div className="mx-auto max-w-md px-4 pb-16">
       <div className="mt-6 rounded-2xl bg-gradient-to-b from-amber-900 to-amber-800 px-6 py-10 text-center text-amber-50">
-        <h1 className="tmr-display text-4xl leading-tight">{publicSettings?.siteName || 'מכירת תמרים טריים'}</h1>
+        <h1 className="tmr-display text-4xl leading-tight">{publicSettings?.siteName || 'הזמנת תמרים - תמרולה'}</h1>
         <p className="mt-3 text-sm leading-relaxed text-amber-100/90">{publicSettings?.customerIntro}</p>
         {sale && <p className="mt-4 inline-block rounded-full bg-amber-950/30 px-3 py-1 text-xs font-medium text-amber-100">{sale.name}</p>}
         {sale && sale.deadline && sale.status === 'open' && !deadlinePassed && (
