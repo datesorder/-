@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from './lib/supabaseClient';
-import { adminGetSettings, adminListSales, adminCreateSale, adminGetOrders, adminGetCustomer, adminUpdateOrder, adminBulkUpdateOrders, adminCloseSale, adminSaveSettings } from './lib/adminApi';
+import { adminGetSettings, adminListSales, adminCreateSale, adminGetOrders, adminGetCustomer, adminUpdateOrder, adminBulkUpdateOrders, adminCloseSale, adminSaveSettings, adminDeleteOrder } from './lib/adminApi';
 import { getOpenSale, createOrder, getPublicSettings } from './lib/publicApi';
 
 /* ========================= קבועים וברירות מחדל ========================= */
@@ -262,44 +262,174 @@ function exportSaleReport(sale, orders) {
 
 /* ============================ רכיבי UI קטנים ============================ */
 
+// שכבת העיצוב (בהשראת Apple): טיפוגרפיה, חומרים שקופים, צללים ותנועה.
+// שמות המחלקות הקיימים (tmr-root / tmr-display / tmr-scrollbar /
+// tmr-card-shadow) נשמרו, כך ששום רכיב שמשתמש בהם לא נשבר.
 function GlobalStyle() {
   return (
     <style>{`
-      /* פונטים: לא תלויים ברשת (הטענת Google Fonts לא אמינה בסביבת התצוגה).
-         מחרוזת פונטים מערכת רחבה, עם כיסוי טוב לעברית בכל מערכת הפעלה. */
+      /* פונטים: מערכת בלבד (בלי הטענה מהרשת). SF Pro באייפון/מק,
+         Segoe UI בווינדוס, Roboto באנדרואיד - כולם עם כיסוי טוב לעברית. */
       .tmr-root, .tmr-root * {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Hebrew", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
         box-sizing: border-box;
       }
+      .tmr-root {
+        color: #1D1D1F;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        text-rendering: optimizeLegibility;
+        -webkit-text-size-adjust: 100%;
+        -webkit-tap-highlight-color: transparent;
+        font-feature-settings: "kern";
+      }
+      .tmr-root ::selection { background: rgba(176, 125, 69, 0.22); }
+      .tmr-root input, .tmr-root select, .tmr-root textarea, .tmr-root button { font-family: inherit; }
+      .tmr-root button, .tmr-root [role="button"], .tmr-root a { touch-action: manipulation; }
+
+      /* טיפוגרפיה: ריווח אותיות שלילי לכותרות גדולות, צפוף יותר ככל שהטקסט גדל */
       .tmr-display {
         font-weight: 700;
-        letter-spacing: -0.01em;
+        letter-spacing: -0.022em;
+        line-height: 1.08;
       }
-      .tmr-root input, .tmr-root select, .tmr-root textarea, .tmr-root button { font-family: inherit; }
-      .tmr-scrollbar::-webkit-scrollbar { height: 6px; }
-      .tmr-scrollbar::-webkit-scrollbar-thumb { background: #d6cbb2; border-radius: 4px; }
-      .tmr-card-shadow { box-shadow: 0 1px 2px rgba(28, 20, 12, 0.04), 0 8px 24px -12px rgba(28, 20, 12, 0.12); }
+      .tmr-title { font-weight: 600; letter-spacing: -0.012em; }
+      .tmr-num { font-variant-numeric: tabular-nums; letter-spacing: -0.015em; }
+
+      /* מיקוד מקלדת ברור, בלי טבעת מיותרת בלחיצת עכבר/מגע */
+      .tmr-root :focus-visible { outline: 3px solid rgba(149, 101, 55, 0.45); outline-offset: 2px; }
+      .tmr-root input:focus-visible, .tmr-root select:focus-visible, .tmr-root textarea:focus-visible { outline: none; }
+
+      .tmr-scrollbar { scrollbar-width: none; }
+      .tmr-scrollbar::-webkit-scrollbar { display: none; }
+
+      /* משטחים: צל רך בשתי שכבות + קו מתאר עדין במקום מסגרת */
+      .tmr-card-shadow {
+        box-shadow:
+          0 0 0 0.5px rgba(0, 0, 0, 0.06),
+          0 1px 2px rgba(0, 0, 0, 0.04),
+          0 10px 28px -14px rgba(0, 0, 0, 0.16);
+      }
+      .tmr-row {
+        box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.07), 0 1px 2px rgba(0, 0, 0, 0.04);
+        transition: transform 120ms ease-out, box-shadow 200ms ease-out;
+      }
+      @media (hover: hover) {
+        .tmr-row:hover { box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 8px 24px -12px rgba(0, 0, 0, 0.18); }
+      }
+      .tmr-row:active { transform: scale(0.985); }
+
+      /* תגובה מיידית בלחיצה (pointer-down), לא רק בשחרור */
+      .tmr-press { transition: transform 100ms ease-out, background-color 150ms ease-out, box-shadow 150ms ease-out, opacity 150ms ease-out; }
+      .tmr-press:not(:disabled):active { transform: scale(0.97); }
+
+      /* חומר שקוף (Glass): לסרגל הניהול ולהודעות */
+      .tmr-glass {
+        background: rgba(245, 245, 247, 0.72);
+        -webkit-backdrop-filter: saturate(180%) blur(20px);
+        backdrop-filter: saturate(180%) blur(20px);
+      }
+      .tmr-glass-light {
+        background: rgba(255, 255, 255, 0.78);
+        -webkit-backdrop-filter: saturate(180%) blur(20px);
+        backdrop-filter: saturate(180%) blur(20px);
+      }
+      .tmr-glass-dark {
+        background: rgba(29, 29, 31, 0.86);
+        -webkit-backdrop-filter: saturate(180%) blur(20px);
+        backdrop-filter: saturate(180%) blur(20px);
+      }
+      .tmr-edge { box-shadow: 0 0.5px 0 rgba(0, 0, 0, 0.08); }
+
+      /* כותרת הדף ללקוח: חום תמר עמוק עם הארה עדינה */
+      .tmr-hero {
+        background:
+          radial-gradient(120% 90% at 50% 0%, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0) 60%),
+          linear-gradient(180deg, #5A3A20 0%, #3F2816 100%);
+        box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08) inset, 0 18px 40px -22px rgba(63, 40, 22, 0.65);
+      }
+
+      /* בקרה מפולחת (Segmented control) לטאבים של הניהול */
+      .tmr-segment { background: rgba(118, 118, 128, 0.12); }
+      .tmr-segment-active { background: #fff; box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12), 0 3px 1px rgba(0, 0, 0, 0.04); }
+
+      /* חלונות קופצים: רקע מעומעם, גיליון שעולה מלמטה במובייל ומופיע במרכז במחשב */
+      @keyframes tmr-scrim-in { from { opacity: 0; } to { opacity: 1; } }
+      @keyframes tmr-sheet-in { from { transform: translateY(100%); } to { transform: translateY(0); } }
+      @keyframes tmr-dialog-in {
+        from { opacity: 0; transform: scale(0.96); filter: blur(4px); }
+        to { opacity: 1; transform: scale(1); filter: blur(0); }
+      }
+      @keyframes tmr-toast-in {
+        from { opacity: 0; transform: translateY(12px) scale(0.96); }
+        to { opacity: 1; transform: translateY(0) scale(1); }
+      }
+      @keyframes tmr-pop {
+        0% { opacity: 0; transform: scale(0.6); }
+        100% { opacity: 1; transform: scale(1); }
+      }
+      @keyframes tmr-fade-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+      .tmr-scrim { background: rgba(0, 0, 0, 0.32); animation: tmr-scrim-in 220ms ease-out both; }
+      .tmr-sheet { animation: tmr-sheet-in 380ms cubic-bezier(0.32, 0.72, 0, 1) both; padding-bottom: env(safe-area-inset-bottom); }
+      @media (min-width: 640px) {
+        .tmr-sheet { animation: tmr-dialog-in 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both; padding-bottom: 0; }
+      }
+      .tmr-toast { animation: tmr-toast-in 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+      .tmr-pop { animation: tmr-pop 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+      .tmr-fade-up { animation: tmr-fade-up 360ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+      .tmr-safe-bottom { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+
+      @keyframes tmr-spin { to { transform: rotate(360deg); } }
+      .tmr-spinner { animation: tmr-spin 0.8s linear infinite; }
+
+      /* נגישות: פחות תנועה, פחות שקיפות, יותר ניגודיות - לפי הגדרות המכשיר */
+      @media (prefers-reduced-motion: reduce) {
+        .tmr-sheet, .tmr-toast, .tmr-pop, .tmr-fade-up { animation: tmr-scrim-in 180ms ease-out both !important; }
+        .tmr-press:not(:disabled):active, .tmr-row:active { transform: none; }
+      }
+      @media (prefers-reduced-transparency: reduce) {
+        .tmr-glass { background: #F5F5F7; -webkit-backdrop-filter: none; backdrop-filter: none; }
+        .tmr-glass-light { background: #fff; -webkit-backdrop-filter: none; backdrop-filter: none; }
+        .tmr-glass-dark { background: #1D1D1F; -webkit-backdrop-filter: none; backdrop-filter: none; }
+      }
+      @media (prefers-contrast: more) {
+        .tmr-card-shadow, .tmr-row { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35); }
+        .tmr-glass, .tmr-glass-light { background: #fff; -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: 0 1px 0 rgba(0, 0, 0, 0.4); }
+      }
     `}</style>
   );
 }
 
 function Spinner() {
   return (
-    <div className="flex items-center justify-center py-16">
-      <div className="h-8 w-8 rounded-full border-2 border-amber-800 border-t-transparent animate-spin" />
+    <div className="flex items-center justify-center py-16" role="status" aria-label="טוען">
+      <div className="tmr-spinner h-7 w-7 rounded-full border-[2.5px] border-stone-300 border-t-amber-700" />
     </div>
+  );
+}
+
+function TrashIcon({ className = 'h-4 w-4' }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3.5 6h17" />
+      <path d="M9 6V4.5A1.5 1.5 0 0 1 10.5 3h3A1.5 1.5 0 0 1 15 4.5V6" />
+      <path d="M18.5 6l-.8 13.1A2 2 0 0 1 15.7 21H8.3a2 2 0 0 1-2-1.9L5.5 6" />
+      <path d="M10 10.5v6" />
+      <path d="M14 10.5v6" />
+    </svg>
   );
 }
 
 function Button({ children, variant = 'primary', className = '', ...props }) {
   const base =
-    'inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-amber-800/30';
+    'tmr-press inline-flex min-h-[44px] items-center justify-center gap-2 rounded-[14px] px-5 py-2.5 text-[15px] font-semibold tracking-[-0.01em] select-none disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none';
   const variants = {
-    primary: 'bg-amber-900 text-amber-50 shadow-sm hover:bg-amber-800',
-    secondary: 'bg-white text-amber-900 border border-amber-900/25 hover:bg-amber-50',
-    ghost: 'bg-transparent text-stone-500 hover:bg-stone-100',
-    danger: 'bg-rose-800 text-rose-50 hover:bg-rose-900',
-    subtle: 'bg-stone-100 text-stone-700 hover:bg-stone-200',
+    primary: 'bg-amber-900 text-white shadow-[0_1px_2px_rgba(0,0,0,0.12)] hover:bg-amber-800',
+    secondary: 'bg-amber-900/[0.08] text-amber-900 hover:bg-amber-900/[0.13]',
+    ghost: 'bg-transparent text-amber-800 hover:bg-stone-900/[0.05]',
+    danger: 'bg-rose-600 text-white shadow-[0_1px_2px_rgba(0,0,0,0.12)] hover:bg-rose-700',
+    tintedDanger: 'bg-rose-500/[0.1] text-rose-700 hover:bg-rose-500/[0.16]',
+    subtle: 'bg-stone-900/[0.06] text-stone-800 hover:bg-stone-900/[0.1]',
   };
   return (
     <button className={`${base} ${variants[variant]} ${className}`} {...props}>
@@ -311,46 +441,65 @@ function Button({ children, variant = 'primary', className = '', ...props }) {
 function Field({ label, children, hint }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-sm font-medium text-stone-600">{label}</span>
+      <span className="mb-1.5 block px-1 text-[13px] font-medium text-stone-500">{label}</span>
       {children}
-      {hint && <span className="mt-1 block text-xs text-stone-400">{hint}</span>}
+      {hint && <span className="mt-1.5 block px-1 text-xs text-stone-400">{hint}</span>}
     </label>
   );
 }
 
 const inputCls =
-  'w-full rounded-xl border border-stone-300 bg-white px-4 py-3 text-base text-stone-800 placeholder:text-stone-400 focus:border-amber-800 focus:outline-none focus:ring-2 focus:ring-amber-800/15 transition';
+  'w-full rounded-[12px] border border-stone-300/80 bg-white px-4 py-3 text-base text-stone-900 placeholder:text-stone-400 shadow-[0_1px_1px_rgba(0,0,0,0.02)] focus:border-amber-600 focus:outline-none focus:ring-4 focus:ring-amber-600/15 transition-[border-color,box-shadow] duration-150';
 
 function Badge({ tone = 'stone', children }) {
   const tones = {
-    gold: 'bg-amber-100 text-amber-900',
-    green: 'bg-emerald-100 text-emerald-800',
-    red: 'bg-rose-100 text-rose-800',
-    blue: 'bg-sky-100 text-sky-800',
-    stone: 'bg-stone-100 text-stone-600',
+    gold: 'bg-amber-500/[0.14] text-amber-800',
+    green: 'bg-emerald-500/[0.14] text-emerald-800',
+    red: 'bg-rose-500/[0.12] text-rose-700',
+    blue: 'bg-sky-500/[0.12] text-sky-800',
+    stone: 'bg-stone-900/[0.06] text-stone-600',
   };
-  return <span className={`inline-block rounded-full px-2.5 py-1 text-xs font-medium ${tones[tone]}`}>{children}</span>;
+  return <span className={`inline-block rounded-full px-2.5 py-[3px] text-xs font-semibold tracking-[-0.005em] ${tones[tone]}`}>{children}</span>;
 }
 
 function Card({ children, className = '' }) {
-  return <div className={`tmr-card-shadow rounded-2xl border border-stone-200/80 bg-white ${className}`}>{children}</div>;
+  return <div className={`tmr-card-shadow rounded-[22px] bg-white ${className}`}>{children}</div>;
 }
 
 function Modal({ title, onClose, children, footer }) {
+  // נועל את גלילת הדף מאחורי החלון (חשוב במיוחד באייפון), ומחזיר בסגירה.
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, []);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-stone-900/50 p-0 sm:items-center sm:p-4" onClick={onClose}>
+    <div className="tmr-scrim fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-6" onClick={onClose}>
       <div
-        className="max-h-[92vh] w-full overflow-y-auto rounded-t-2xl bg-white sm:max-w-lg sm:rounded-2xl"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="tmr-sheet flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-[28px] bg-white shadow-[0_-8px_40px_rgba(0,0,0,0.18)] sm:max-w-lg sm:rounded-[28px] sm:shadow-[0_24px_80px_-12px_rgba(0,0,0,0.35)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="sticky top-0 flex items-center justify-between border-b border-stone-100 bg-white px-5 py-4">
-          <h3 className="text-base font-semibold text-stone-800">{title}</h3>
-          <button onClick={onClose} className="rounded-full p-1 text-stone-400 hover:bg-stone-100" aria-label="סגור">
-            ✕
-          </button>
+        <div className="tmr-glass-light tmr-edge relative z-10 shrink-0 px-5 pb-3 pt-2.5">
+          <div className="mx-auto mb-2 h-[5px] w-9 rounded-full bg-stone-300 sm:hidden" aria-hidden="true" />
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="tmr-title text-[17px] text-stone-900">{title}</h3>
+            <button
+              onClick={onClose}
+              className="tmr-press flex h-8 w-8 items-center justify-center rounded-full bg-stone-900/[0.07] text-[13px] font-bold text-stone-500 hover:bg-stone-900/[0.11]"
+              aria-label="סגור"
+            >
+              ✕
+            </button>
+          </div>
         </div>
-        <div className="px-5 py-4">{children}</div>
-        {footer && <div className="sticky bottom-0 flex gap-2 border-t border-stone-100 bg-white px-5 py-4">{footer}</div>}
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5">{children}</div>
+        {footer && <div className="tmr-glass-light relative z-10 flex shrink-0 gap-2 border-t border-stone-900/[0.06] px-5 pt-3 tmr-safe-bottom">{footer}</div>}
       </div>
     </div>
   );
@@ -359,8 +508,19 @@ function Modal({ title, onClose, children, footer }) {
 function Toast({ message }) {
   if (!message) return null;
   return (
-    <div className="fixed bottom-4 left-1/2 z-[60] -translate-x-1/2 rounded-full bg-stone-900 px-4 py-2 text-sm text-white shadow-lg">
-      {message}
+    <div
+      className="pointer-events-none fixed inset-x-0 bottom-6 z-[60] flex justify-center px-4"
+      style={{ marginBottom: 'env(safe-area-inset-bottom)' }}
+    >
+      <div
+        key={message}
+        role="status"
+        aria-live="polite"
+        className="tmr-toast tmr-glass-dark flex max-w-full items-center gap-2 rounded-full px-5 py-3 text-[15px] font-medium text-white shadow-[0_12px_32px_-8px_rgba(0,0,0,0.4)]"
+      >
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/20 text-[11px]" aria-hidden="true">✓</span>
+        {message}
+      </div>
     </div>
   );
 }
@@ -509,15 +669,15 @@ function CustomerView({ onSubmitOrder, onGoAdmin }) {
   if (step === 'confirmation' && lastOrder) {
     const link = lastOrder.paymentMethod === 'bit' ? publicSettings?.bitLink : lastOrder.paymentMethod === 'paybox' ? publicSettings?.payboxLink : null;
     return (
-      <div className="mx-auto max-w-md px-4 py-10">
-        <Card className="p-7 text-center">
-          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-3xl text-emerald-700">✓</div>
-          <h2 className="tmr-display text-2xl">ההזמנה התקבלה בהצלחה!</h2>
-          <div className="mt-6 space-y-2.5 rounded-xl border border-stone-100 bg-amber-50/70 p-4 text-right text-sm text-stone-700">
+      <div className="tmr-fade-up mx-auto max-w-md px-4 py-10">
+        <Card className="p-7 text-center sm:p-8">
+          <div className="tmr-pop mx-auto mb-5 flex h-[72px] w-[72px] items-center justify-center rounded-full bg-emerald-500 text-4xl font-semibold text-white shadow-[0_10px_24px_-10px_rgba(48,177,82,0.7)]">✓</div>
+          <h2 className="tmr-display text-[28px] text-stone-900">ההזמנה התקבלה בהצלחה!</h2>
+          <div className="mt-6 space-y-3 rounded-[16px] bg-stone-50 p-4 text-right text-[15px] text-stone-800">
             <div className="flex justify-between"><span className="text-stone-500">מספר הזמנה</span><span className="font-medium">{lastOrder.orderNumber}</span></div>
             <div className="flex justify-between"><span className="text-stone-500">שם</span><span className="font-medium">{lastOrder.firstName} {lastOrder.lastName}</span></div>
             <div className="flex justify-between"><span className="text-stone-500">כמות</span><span className="font-medium">{lastOrder.qty} אריזות</span></div>
-            <div className="flex justify-between"><span className="text-stone-500">סה״כ לתשלום</span><span className="font-semibold text-amber-900">{fmtCurrency(lastOrder.amount)}</span></div>
+            <div className="flex justify-between"><span className="text-stone-500">סה״כ לתשלום</span><span className="tmr-num font-semibold text-amber-900">{fmtCurrency(lastOrder.amount)}</span></div>
             <div className="flex justify-between"><span className="text-stone-500">אמצעי תשלום</span><span className="font-medium">{PAYMENT_METHODS.find((m) => m.v === lastOrder.paymentMethod)?.label}</span></div>
           </div>
           {link && (
@@ -550,14 +710,14 @@ function CustomerView({ onSubmitOrder, onGoAdmin }) {
 
   return (
     <div className="mx-auto max-w-md px-4 pb-16">
-      <div className="mt-6 rounded-2xl bg-gradient-to-b from-amber-900 to-amber-800 px-6 py-10 text-center text-amber-50">
-        <h1 className="tmr-display text-4xl leading-tight">{publicSettings?.siteName || 'הזמנת תמרים - תמרולה'}</h1>
-        <p className="mt-3 text-sm leading-relaxed text-amber-100/90">{publicSettings?.customerIntro}</p>
-        {sale && <p className="mt-4 inline-block rounded-full bg-amber-950/30 px-3 py-1 text-xs font-medium text-amber-100">{sale.name}</p>}
+      <div className="tmr-hero tmr-fade-up mt-4 rounded-[28px] px-6 pb-10 pt-12 text-center text-white sm:mt-8">
+        <h1 className="tmr-display text-[34px] sm:text-[40px]">{publicSettings?.siteName || 'הזמנת תמרים - תמרולה'}</h1>
+        <p className="mx-auto mt-3 max-w-xs text-[15px] leading-relaxed text-white/80">{publicSettings?.customerIntro}</p>
+        {sale && <p className="mt-5 inline-block rounded-full bg-white/[0.14] px-3.5 py-1.5 text-[13px] font-semibold text-white ring-1 ring-inset ring-white/15">{sale.name}</p>}
         {sale && sale.deadline && sale.status === 'open' && !deadlinePassed && (
-          <p className="mt-2 text-xs text-amber-200">ניתן להזמין עד {fmtDeadline(sale.deadline)}</p>
+          <p className="mt-3 text-[13px] text-white/75">ניתן להזמין עד {fmtDeadline(sale.deadline)}</p>
         )}
-        {sale && sale.pickupDate && <p className="mt-1 text-xs text-amber-200">איסוף בתאריך {fmtDate(sale.pickupDate)}</p>}
+        {sale && sale.pickupDate && <p className="mt-1 text-[13px] text-white/75">איסוף בתאריך {fmtDate(sale.pickupDate)}</p>}
       </div>
 
       {saleLoading || publicSettingsLoading ? (
@@ -619,7 +779,7 @@ function CustomerView({ onSubmitOrder, onGoAdmin }) {
                 <button
                   type="button"
                   onClick={() => updateQty(Math.max(1, Number(form.qty || 1) - 1))}
-                  className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-stone-300 bg-white text-xl font-semibold text-stone-600 hover:border-amber-800"
+                  className="tmr-press flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-stone-900/[0.06] text-2xl font-medium text-stone-800 hover:bg-stone-900/[0.1]"
                   aria-label="הפחת כמות"
                 >
                   −
@@ -631,12 +791,12 @@ function CustomerView({ onSubmitOrder, onGoAdmin }) {
                   step={1}
                   value={form.qty}
                   onChange={(e) => updateQty(e.target.value)}
-                  className={`${inputCls} text-center text-lg font-semibold`}
+                  className={`${inputCls} tmr-num text-center text-lg font-semibold`}
                 />
                 <button
                   type="button"
                   onClick={() => updateQty(Number(form.qty || 0) + 1)}
-                  className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-stone-300 bg-white text-xl font-semibold text-stone-600 hover:border-amber-800"
+                  className="tmr-press flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-stone-900/[0.06] text-2xl font-medium text-stone-800 hover:bg-stone-900/[0.1]"
                   aria-label="הוסף כמות"
                 >
                   +
@@ -644,11 +804,11 @@ function CustomerView({ onSubmitOrder, onGoAdmin }) {
               </div>
             </Field>
 
-            <div className="flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-4 py-4">
+            <div className="flex items-center justify-between rounded-[16px] bg-amber-50 px-4 py-4 ring-1 ring-inset ring-amber-900/[0.08]">
               <span className="text-sm text-stone-600">{form.qty || 0} קופסאות</span>
               <span className="text-right">
                 <span className="block text-[11px] font-medium text-stone-500">סה״כ לתשלום</span>
-                <span className="text-2xl font-bold text-amber-900">{fmtCurrency(amount)}</span>
+                <span className="tmr-num text-[28px] font-bold text-amber-900">{fmtCurrency(amount)}</span>
               </span>
             </div>
 
@@ -663,8 +823,8 @@ function CustomerView({ onSubmitOrder, onGoAdmin }) {
                     type="button"
                     key={m.v}
                     onClick={() => update('paymentMethod', m.v)}
-                    className={`rounded-xl border py-3 text-sm font-semibold transition ${
-                      form.paymentMethod === m.v ? 'border-amber-900 bg-amber-900 text-amber-50' : 'border-stone-300 bg-white text-stone-600 hover:border-amber-800'
+                    className={`tmr-press min-h-[48px] rounded-[14px] border py-3 text-[15px] font-semibold ${
+                      form.paymentMethod === m.v ? 'border-amber-900 bg-amber-900 text-white shadow-[0_4px_12px_-4px_rgba(78,50,28,0.5)]' : 'border-stone-300/80 bg-white text-stone-700 hover:border-amber-600'
                     }`}
                   >
                     {m.label}
@@ -674,13 +834,13 @@ function CustomerView({ onSubmitOrder, onGoAdmin }) {
             </Field>
 
             {(form.paymentMethod === 'bit' || form.paymentMethod === 'paybox') && (
-              <div className="space-y-3 rounded-xl border border-amber-300 bg-amber-50 p-4">
+              <div className="space-y-3 rounded-[16px] bg-amber-50 p-4 ring-1 ring-inset ring-amber-900/10">
                 {paymentLink ? (
                   <>
                     <p className="text-sm font-medium leading-relaxed text-amber-900">
                       {form.paymentMethod === 'bit' ? 'לחץ לשליחת ההזמנה ומעבר לתשלום בביט' : 'לחץ לשליחת ההזמנה ומעבר לתשלום ב-PayBox'}
                     </p>
-                    <Button type="button" variant="secondary" className="w-full" disabled={submitting} onClick={handlePayAndSubmit}>
+                    <Button type="button" className="w-full" disabled={submitting} onClick={handlePayAndSubmit}>
                       {submitting ? 'שולח…' : `לתשלום ב-${form.paymentMethod === 'bit' ? 'Bit' : 'PayBox'}`}
                     </Button>
                   </>
@@ -693,7 +853,7 @@ function CustomerView({ onSubmitOrder, onGoAdmin }) {
               </div>
             )}
 
-            {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800">{error}</p>}
+            {error && <p className="rounded-[12px] bg-rose-50 px-3.5 py-2.5 text-sm text-rose-800 ring-1 ring-inset ring-rose-600/10">{error}</p>}
             {!((form.paymentMethod === 'bit' || form.paymentMethod === 'paybox') && paymentLink) && (
               <Button type="submit" className="w-full" disabled={submitting}>
                 {submitting ? 'שולח הזמנה…' : 'שלח הזמנה'}
@@ -742,8 +902,8 @@ function AdminGate({ onBack }) {
 
   return (
     <div className="mx-auto flex min-h-[70vh] max-w-md flex-col items-center justify-center px-4 text-center">
-      <Card className="w-full p-6">
-        <h2 className="tmr-display text-xl font-bold text-stone-800">כניסה לניהול</h2>
+      <Card className="tmr-fade-up w-full p-7">
+        <h2 className="tmr-display text-[26px] text-stone-900">כניסה לניהול</h2>
         <form onSubmit={handleLogin} className="mt-5 space-y-4 text-right">
           <Field label="אימייל">
             <input
@@ -765,7 +925,7 @@ function AdminGate({ onBack }) {
               onChange={(e) => setPassword(e.target.value)}
             />
           </Field>
-          {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800">{error}</p>}
+          {error && <p className="rounded-[12px] bg-rose-50 px-3.5 py-2.5 text-sm text-rose-800 ring-1 ring-inset ring-rose-600/10">{error}</p>}
           <Button type="submit" className="w-full" disabled={loading}>
             {loading ? 'מתחבר…' : 'כניסה'}
           </Button>
@@ -810,25 +970,28 @@ function AdminView({ app }) {
 
   return (
     <div className="mx-auto max-w-5xl px-4 pb-16">
-      <div className="flex items-center justify-between py-4">
-        <h1 className="tmr-display text-lg font-bold text-stone-800">ניהול מכירת תמרים</h1>
-        <button onClick={app.exitAdmin} className="text-xs text-stone-400 hover:text-stone-600">
-          יציאה לאתר הלקוחות
-        </button>
-      </div>
-
-      <div className="tmr-scrollbar mb-6 flex gap-2 overflow-x-auto border-b border-stone-200 pb-px">
-        {ADMIN_TABS.map((t) => (
-          <button
-            key={t.v}
-            onClick={() => setTab(t.v)}
-            className={`whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium transition ${
-              tab === t.v ? 'border-amber-900 text-amber-900' : 'border-transparent text-stone-400 hover:text-stone-600'
-            }`}
-          >
-            {t.label}
+      <div className="tmr-glass tmr-edge sticky top-0 z-30 -mx-4 mb-6 px-4 pb-3 pt-[max(0.5rem,env(safe-area-inset-top))]">
+        <div className="flex items-center justify-between gap-3 py-2">
+          <h1 className="tmr-display text-[22px] text-stone-900">ניהול מכירת תמרים</h1>
+          <button onClick={app.exitAdmin} className="tmr-press shrink-0 rounded-full px-3 py-1.5 text-[13px] font-medium text-amber-800 hover:bg-stone-900/[0.05]">
+            יציאה לאתר הלקוחות
           </button>
-        ))}
+        </div>
+
+        <div className="tmr-scrollbar tmr-segment mt-1 flex gap-1 overflow-x-auto rounded-[12px] p-1">
+          {ADMIN_TABS.map((t) => (
+            <button
+              key={t.v}
+              onClick={() => setTab(t.v)}
+              aria-pressed={tab === t.v}
+              className={`tmr-press flex-1 whitespace-nowrap rounded-[9px] px-3.5 py-1.5 text-[13px] font-semibold ${
+                tab === t.v ? 'tmr-segment-active text-stone-900' : 'text-stone-500 hover:text-stone-800'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {tab === 'dashboard' && <DashboardTab app={app} goOrders={goOrders} goSales={goSales} />}
@@ -842,9 +1005,9 @@ function AdminView({ app }) {
 
 function StatCard({ label, value, sub }) {
   return (
-    <Card className="p-4">
-      <div className="text-xs text-stone-400">{label}</div>
-      <div className="mt-1 text-2xl font-semibold text-stone-800">{value}</div>
+    <Card className="p-4 sm:p-5">
+      <div className="text-[13px] font-medium text-stone-500">{label}</div>
+      <div className="tmr-num mt-1 text-[26px] font-semibold text-stone-900">{value}</div>
       {sub && <div className="mt-0.5 text-xs text-stone-400">{sub}</div>}
     </Card>
   );
@@ -867,7 +1030,7 @@ function DashboardTab({ app, goOrders, goSales }) {
   }, [app.closedSaleIds, app.salesById, app.ordersBySaleId, app.loadedSaleIds]);
 
   const endedSalesBanner = endedSalesCount > 0 && (
-    <Card className="border-2 border-amber-300 bg-amber-50 p-4">
+    <Card className="bg-amber-50 p-4 ring-1 ring-inset ring-amber-900/10">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 className="text-sm font-semibold text-amber-900">
           {endedSalesCount} מכירות שהסתיימו ועדיין דורשות טיפול
@@ -916,7 +1079,7 @@ function DashboardTab({ app, goOrders, goSales }) {
     <div className="space-y-5">
       {endedSalesBanner}
       <div>
-        <h2 className="text-base font-semibold text-stone-800">{sale.name}</h2>
+        <h2 className="tmr-title text-xl text-stone-900">{sale.name}</h2>
         <p className="text-xs text-stone-400">
           נפתחה {fmtDate(sale.openDate)} · <Badge tone={sale.status === 'open' ? 'green' : 'stone'}>{sale.status === 'open' ? 'פתוחה' : 'סגורה'}</Badge>
           {sale.deadline && ` · דדליין הזמנות: ${fmtDeadline(sale.deadline)}`}
@@ -925,13 +1088,13 @@ function DashboardTab({ app, goOrders, goSales }) {
       </div>
 
       {overduePickupOrders.length > 0 && (
-        <Card className="border-2 border-rose-300 bg-rose-50 p-4">
+        <Card className="bg-rose-50 p-4 ring-1 ring-inset ring-rose-600/15">
           <h3 className="text-sm font-semibold text-rose-800">
             הזמנות שתאריך האיסוף שלהן הגיע/עבר ועדיין לא נאספו ({overduePickupOrders.length})
           </h3>
           <ul className="mt-2 space-y-1">
             {overduePickupOrders.map((o) => (
-              <li key={o.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white/70 px-3 py-2 text-sm text-rose-900">
+              <li key={o.id} className="flex flex-wrap items-center justify-between gap-2 rounded-[12px] bg-white/80 px-3 py-2 text-sm text-rose-900">
                 <span>
                   {o.orderNumber} · {o.firstName} {o.lastName}
                 </span>
@@ -980,6 +1143,10 @@ function OrdersTab({ app, saleId, initialPreset, readOnlyBanner }) {
   const [methodFilter, setMethodFilter] = useState('all');
   const [openOrderId, setOpenOrderId] = useState(null);
   const [loadingOrders, setLoadingOrders] = useState(false);
+  // מחיקה לצמיתות: עותק של ההזמנה שמחכה לאישור (null = אין חלון אישור פתוח)
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   const sale = saleId ? app.salesById[saleId] : null;
   const orders = saleId ? app.ordersBySaleId[saleId] || [] : [];
@@ -1012,6 +1179,30 @@ function OrdersTab({ app, saleId, initialPreset, readOnlyBanner }) {
       filtered.map((o) => o.id),
       { paymentStatus: 'paid' }
     );
+  }
+
+  // מחיקה לצמיתות: חלון פרטי ההזמנה נסגר קודם, ורק אז נפתח חלון האישור
+  // (עם עותק של פרטי ההזמנה). כך חלון הפרטים לעולם לא מנסה להציג הזמנה
+  // שכבר הוסרה מהרשימה.
+  function requestDeleteOrder(order) {
+    setOpenOrderId(null);
+    setDeleteError('');
+    setDeleteTarget(order);
+  }
+
+  async function confirmDeleteOrder() {
+    if (!deleteTarget || deleting) return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      await app.deleteOrder(saleId, deleteTarget.id);
+      setDeleteTarget(null);
+    } catch (err) {
+      console.error('deleteOrder failed', err);
+      setDeleteError('המחיקה נכשלה וההזמנה לא נמחקה. נסו שוב בעוד רגע.');
+    } finally {
+      setDeleting(false);
+    }
   }
 
   if (!sale) {
@@ -1074,16 +1265,16 @@ function OrdersTab({ app, saleId, initialPreset, readOnlyBanner }) {
                 role="button"
                 tabIndex={0}
                 onKeyDown={(e) => { if (e.key === 'Enter') setOpenOrderId(o.id); }}
-                className="flex w-full cursor-pointer items-center justify-between gap-3 rounded-xl border border-stone-200 bg-white p-4 text-right transition hover:border-amber-800"
+                className="tmr-row flex w-full cursor-pointer items-center justify-between gap-3 rounded-[18px] bg-white p-4 text-right"
               >
                 <div>
-                  <div className="text-sm font-medium text-stone-800">
+                  <div className="text-[15px] font-semibold text-stone-900">
                     {o.firstName} {o.lastName} <span className="text-stone-300">·</span> <span className="text-stone-400">{o.orderNumber}</span>
                   </div>
                   <div className="mt-1 text-xs text-stone-400">{o.phone} · {o.qty} אריזות · {fmtDate(o.createdAt)}</div>
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1.5">
-                  <span className="text-sm font-semibold text-stone-800">{fmtCurrency(o.amount)}</span>
+                  <span className="tmr-num text-[15px] font-semibold text-stone-900">{fmtCurrency(o.amount)}</span>
                   <div className="flex gap-1">
                     <Badge tone={o.paymentStatus === 'paid' ? 'green' : 'red'}>{paymentStatusDisplay(o)}</Badge>
                     <Badge tone={orderStatusMeta(o.orderStatus).tone}>{orderStatusMeta(o.orderStatus).label}</Badge>
@@ -1095,7 +1286,7 @@ function OrdersTab({ app, saleId, initialPreset, readOnlyBanner }) {
                         e.stopPropagation();
                         app.updateOrder(saleId, o.id, { orderStatus: 'delivered' });
                       }}
-                      className="mt-0.5 rounded-lg bg-emerald-700 px-2.5 py-1 text-xs font-semibold text-emerald-50 hover:bg-emerald-800"
+                      className="tmr-press mt-0.5 rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
                     >
                       ✓ נמסרה
                     </button>
@@ -1107,7 +1298,7 @@ function OrdersTab({ app, saleId, initialPreset, readOnlyBanner }) {
                         e.stopPropagation();
                         app.updateOrder(saleId, o.id, { paymentStatus: 'paid' });
                       }}
-                      className="mt-0.5 rounded-lg bg-amber-900 px-2.5 py-1 text-xs font-semibold text-amber-50 hover:bg-amber-800"
+                      className="tmr-press mt-0.5 rounded-full bg-amber-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-800"
                     >
                       ✓ סומן כשולם
                     </button>
@@ -1124,13 +1315,53 @@ function OrdersTab({ app, saleId, initialPreset, readOnlyBanner }) {
           saleId={saleId}
           order={orders.find((o) => o.id === openOrderId)}
           onClose={() => setOpenOrderId(null)}
+          onRequestDelete={requestDeleteOrder}
         />
+      )}
+
+      {deleteTarget && (
+        <Modal
+          title="מחיקת הזמנה לצמיתות"
+          onClose={() => {
+            if (!deleting) setDeleteTarget(null);
+          }}
+          footer={
+            <>
+              <Button variant="subtle" className="flex-1" onClick={() => setDeleteTarget(null)} disabled={deleting}>
+                ביטול
+              </Button>
+              <Button variant="danger" className="flex-1" onClick={confirmDeleteOrder} disabled={deleting}>
+                <TrashIcon />
+                {deleting ? 'מוחק…' : 'מחק לצמיתות'}
+              </Button>
+            </>
+          }
+        >
+          <div className="space-y-4 text-center">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-rose-500/[0.12] text-rose-600">
+              <TrashIcon className="h-7 w-7" />
+            </div>
+            <div>
+              <div className="tmr-title text-lg text-stone-900">
+                {deleteTarget.firstName} {deleteTarget.lastName}
+              </div>
+              <div className="mt-0.5 text-sm text-stone-500">הזמנה {deleteTarget.orderNumber}</div>
+            </div>
+            <p className="rounded-[12px] bg-rose-50 px-3.5 py-3 text-right text-sm leading-relaxed text-rose-800 ring-1 ring-inset ring-rose-600/10">
+              <strong className="font-semibold">פעולה זו אינה ניתנת לשחזור.</strong> ההזמנה תימחק לצמיתות ממסד הנתונים, ולא תופיע יותר
+              ברשימות ההזמנות, בהיסטוריה ובדוחות. פרטי הלקוח עצמו לא יימחקו.
+            </p>
+            {deleteError && (
+              <p className="rounded-[12px] bg-rose-50 px-3.5 py-2.5 text-sm text-rose-800 ring-1 ring-inset ring-rose-600/10">{deleteError}</p>
+            )}
+          </div>
+        </Modal>
       )}
     </div>
   );
 }
 
-function OrderDetailModal({ app, saleId, order, onClose }) {
+function OrderDetailModal({ app, saleId, order, onClose, onRequestDelete }) {
   const [form, setForm] = useState(order);
   const [saving, setSaving] = useState(false);
   if (!order) return null;
@@ -1223,7 +1454,7 @@ function OrderDetailModal({ app, saleId, order, onClose }) {
         </Field>
 
         {customerInfo && customerInfo.totalOrders > 1 && (
-          <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          <div className="rounded-[12px] bg-amber-50 px-3.5 py-2.5 text-[13px] text-amber-900">
             לקוח חוזר — הזמין {customerInfo.totalOrders} פעמים בעבר, סה״כ {customerInfo.totalPackages} אריזות.
           </div>
         )}
@@ -1233,7 +1464,7 @@ function OrderDetailModal({ app, saleId, order, onClose }) {
             <button
               type="button"
               onClick={() => updateQty(Math.max(1, Number(form.qty || 1) - 1))}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-stone-300 bg-white text-lg font-semibold text-stone-600"
+              className="tmr-press flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-stone-900/[0.06] text-xl font-medium text-stone-800 hover:bg-stone-900/[0.1]"
               aria-label="הפחת כמות"
             >
               −
@@ -1245,12 +1476,12 @@ function OrderDetailModal({ app, saleId, order, onClose }) {
               step={1}
               value={form.qty}
               onChange={(e) => updateQty(e.target.value)}
-              className={`${inputCls} text-center`}
+              className={`${inputCls} tmr-num text-center`}
             />
             <button
               type="button"
               onClick={() => updateQty(Number(form.qty || 0) + 1)}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-stone-300 bg-white text-lg font-semibold text-stone-600"
+              className="tmr-press flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-stone-900/[0.06] text-xl font-medium text-stone-800 hover:bg-stone-900/[0.1]"
               aria-label="הוסף כמות"
             >
               +
@@ -1285,7 +1516,7 @@ function OrderDetailModal({ app, saleId, order, onClose }) {
 
         {form.notes && (
           <Field label="הערות הלקוח">
-            <div className="rounded-lg bg-stone-50 p-3 text-sm text-stone-600">{form.notes}</div>
+            <div className="rounded-[12px] bg-stone-50 p-3.5 text-sm text-stone-700">{form.notes}</div>
           </Field>
         )}
 
@@ -1293,13 +1524,27 @@ function OrderDetailModal({ app, saleId, order, onClose }) {
           <textarea className={inputCls} rows={2} value={form.internalNote || ''} onChange={(e) => update('internalNote', e.target.value)} />
         </Field>
 
-        <div className="flex flex-wrap gap-2 border-t border-stone-100 pt-3">
+        <div className="space-y-3 border-t border-stone-900/[0.06] pt-4">
           {wa && (
-            <a href={wa} target="_blank" rel="noreferrer">
-              <Button variant="secondary">WhatsApp ללקוח</Button>
+            <a href={wa} target="_blank" rel="noreferrer" className="block">
+              <Button variant="secondary" className="w-full">WhatsApp ללקוח</Button>
             </a>
           )}
-          <Button variant="danger" onClick={handleCancelOrder}>ביטול הזמנה</Button>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <Button variant="tintedDanger" className="w-full" onClick={handleCancelOrder}>ביטול הזמנה</Button>
+              <p className="mt-1.5 px-1 text-xs leading-relaxed text-stone-400">ההזמנה נשארת במערכת בסטטוס "בוטלה".</p>
+            </div>
+            {onRequestDelete && (
+              <div>
+                <Button variant="danger" className="w-full" onClick={() => onRequestDelete(order)}>
+                  <TrashIcon />
+                  מחיקה לצמיתות
+                </Button>
+                <p className="mt-1.5 px-1 text-xs leading-relaxed text-stone-400">ההזמנה תוסר לגמרי ממסד הנתונים.</p>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </Modal>
@@ -1386,7 +1631,7 @@ function HistoryTab({ app }) {
         <button
           key={r.id}
           onClick={() => setDrillSaleId(r.id)}
-          className="flex w-full items-center justify-between gap-3 rounded-xl border border-stone-200 bg-white p-4 text-right hover:border-amber-800"
+          className="tmr-row flex w-full items-center justify-between gap-3 rounded-[18px] bg-white p-4 text-right"
         >
           <div>
             <div className="text-sm font-medium text-stone-800">{r.sale?.name}</div>
@@ -1553,9 +1798,9 @@ function SalesManagementTab({ app }) {
   return (
     <div className="space-y-6">
       <Card className="p-5">
-        <h3 className="text-sm font-semibold text-stone-800">מכירה נוכחית</h3>
+        <h3 className="tmr-title text-[17px] text-stone-900">מכירה נוכחית</h3>
         {currentSale ? (
-          <div className="mt-3 space-y-3 rounded-lg bg-amber-50 p-3">
+          <div className="mt-3 space-y-3 rounded-[16px] bg-amber-50 p-4 ring-1 ring-inset ring-amber-900/[0.08]">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-medium text-stone-800">{currentSale.name}</div>
@@ -1578,9 +1823,9 @@ function SalesManagementTab({ app }) {
         )}
 
         <div className="mt-5 space-y-3 border-t border-stone-100 pt-4">
-          <h4 className="text-sm font-medium text-stone-700">פתיחת מכירה חדשה</h4>
+          <h4 className="tmr-title text-[15px] text-stone-800">פתיחת מכירה חדשה</h4>
           {newSale.sourceLabel && (
-            <p className="rounded-lg bg-stone-100 px-3 py-2 text-xs text-stone-600">
+            <p className="rounded-[12px] bg-stone-100 px-3.5 py-2.5 text-xs text-stone-600">
               מולאו שם, מלאי ומחירים מתוך "{newSale.sourceLabel}". נשאר רק להגדיר דדליין וללחוץ "פתיחת מכירה חדשה".
             </p>
           )}
@@ -1599,7 +1844,7 @@ function SalesManagementTab({ app }) {
             <input type="date" className={inputCls} value={newSale.pickupDate} onChange={(e) => setNewSale((s) => ({ ...s, pickupDate: e.target.value }))} />
           </Field>
           <label className="flex items-center gap-2 text-sm text-stone-600">
-            <input type="checkbox" checked={newSale.stockEnabled} onChange={(e) => setNewSale((s) => ({ ...s, stockEnabled: e.target.checked }))} />
+            <input type="checkbox" className="h-5 w-5 shrink-0 accent-amber-800" checked={newSale.stockEnabled} onChange={(e) => setNewSale((s) => ({ ...s, stockEnabled: e.target.checked }))} />
             הגבלת מלאי אריזות
           </label>
           {newSale.stockEnabled && (
@@ -1609,14 +1854,14 @@ function SalesManagementTab({ app }) {
           )}
           {currentSale && (
             <label className="flex items-center gap-2 text-sm text-stone-600">
-              <input type="checkbox" checked={newSale.closeCurrent} onChange={(e) => setNewSale((s) => ({ ...s, closeCurrent: e.target.checked }))} />
+              <input type="checkbox" className="h-5 w-5 shrink-0 accent-amber-800" checked={newSale.closeCurrent} onChange={(e) => setNewSale((s) => ({ ...s, closeCurrent: e.target.checked }))} />
               סגור את המכירה הנוכחית אוטומטית
             </label>
           )}
-          {newSaleError && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800">{newSaleError}</p>}
+          {newSaleError && <p className="rounded-[12px] bg-rose-50 px-3.5 py-2.5 text-sm text-rose-800 ring-1 ring-inset ring-rose-600/10">{newSaleError}</p>}
           <Button onClick={handleOpenSale}>פתיחת מכירה חדשה</Button>
 
-          {otherSalesError && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800">{otherSalesError}</p>}
+          {otherSalesError && <p className="rounded-[12px] bg-rose-50 px-3.5 py-2.5 text-sm text-rose-800 ring-1 ring-inset ring-rose-600/10">{otherSalesError}</p>}
           {otherSales.length > 0 && (
             <div className="pt-2">
               <span className="text-xs text-stone-400">או שכפול הגדרות ממכירה קודמת (מחירים + מלאי בלבד, ללא הזמנות, דדליין תמיד נקבע מחדש):</span>
@@ -1634,7 +1879,7 @@ function SalesManagementTab({ app }) {
 
       {endedSales.length > 0 && (
         <Card className="p-5">
-          <h3 className="text-sm font-semibold text-stone-800">מכירות שהסתיימו</h3>
+          <h3 className="tmr-title text-[17px] text-stone-900">מכירות שהסתיימו</h3>
           <p className="mt-1 text-xs text-stone-400">
             נסגרו להזמנות, אבל יש בהן עדיין הזמנה שלא נמסרה ו/או לא שולמה. הן יעברו להיסטוריה אוטומטית ברגע שכל ההזמנות שלהן יטופלו.
           </p>
@@ -1643,7 +1888,7 @@ function SalesManagementTab({ app }) {
               <button
                 key={s.id}
                 onClick={() => setDrillSaleId(s.id)}
-                className="flex w-full items-center justify-between gap-3 rounded-xl border border-stone-200 bg-white p-3 text-right hover:border-amber-800"
+                className="tmr-row flex w-full items-center justify-between gap-3 rounded-[16px] bg-white p-3.5 text-right"
               >
                 <div>
                   <div className="text-sm font-medium text-stone-800">{s.name}</div>
@@ -1746,13 +1991,13 @@ function SettingsTab({ app }) {
   return (
     <div className="space-y-6">
       <Card className="space-y-4 p-5">
-        <h3 className="text-sm font-semibold text-stone-800">שם האתר</h3>
+        <h3 className="tmr-title text-[17px] text-stone-900">שם האתר</h3>
         <Field label="שם האתר">
           <input className={inputCls} value={form.siteName} onChange={(e) => update('siteName', e.target.value)} />
         </Field>
       </Card>
       <Card className="space-y-4 p-5">
-        <h3 className="text-sm font-semibold text-stone-800">פרטי מוכר</h3>
+        <h3 className="tmr-title text-[17px] text-stone-900">פרטי מוכר</h3>
         <Field label="שם המוכר">
           <input className={inputCls} value={form.sellerName} onChange={(e) => update('sellerName', e.target.value)} />
         </Field>
@@ -1768,7 +2013,7 @@ function SettingsTab({ app }) {
       </Card>
 
       <Card className="space-y-4 p-5">
-        <h3 className="text-sm font-semibold text-stone-800">קישורי תשלום</h3>
+        <h3 className="tmr-title text-[17px] text-stone-900">קישורי תשלום</h3>
         <Field label="קישור Bit" hint="אם ריק, כפתור Bit לא יוצג ללקוח">
           <input className={inputCls} value={form.bitLink} onChange={(e) => update('bitLink', e.target.value)} placeholder="https://..." />
         </Field>
@@ -1778,7 +2023,7 @@ function SettingsTab({ app }) {
       </Card>
 
       <Card className="space-y-3 p-5">
-        <h3 className="text-sm font-semibold text-stone-800">תמחור ברירת מחדל (מדורג)</h3>
+        <h3 className="tmr-title text-[17px] text-stone-900">תמחור ברירת מחדל (מדורג)</h3>
         <p className="text-xs text-stone-400">
           התמחור הזה ייקבע למכירה הבאה שתיפתח בלבד. לכל מכירה יש עותק קבוע משלה בזמן הפתיחה, כך ששינוי כאן לא משנה מכירות
           שכבר קיימות. כל מדרגה קובעת מחיר ליחידה החל מכמות מסוימת ומעלה.
@@ -1789,14 +2034,14 @@ function SettingsTab({ app }) {
             <input
               type="number"
               min={1}
-              className="w-20 shrink-0 rounded-xl border border-stone-300 bg-white px-3 py-2.5 text-base text-stone-800 placeholder:text-stone-400 focus:border-amber-800 focus:outline-none focus:ring-2 focus:ring-amber-800/15 transition"
+              className="w-20 shrink-0 tmr-num rounded-[12px] border border-stone-300/80 bg-white px-3 py-2.5 text-base text-stone-900 placeholder:text-stone-400 focus:border-amber-600 focus:outline-none focus:ring-4 focus:ring-amber-600/15 transition-[border-color,box-shadow] duration-150"
               value={tier.minQty}
               onChange={(e) => updateTier(i, 'minQty', e.target.value)}
             />
             <span className="shrink-0 text-sm text-stone-600">קופסאות →</span>
             <input
               type="number"
-              className="w-24 shrink-0 rounded-xl border border-stone-300 bg-white px-3 py-2.5 text-base text-stone-800 placeholder:text-stone-400 focus:border-amber-800 focus:outline-none focus:ring-2 focus:ring-amber-800/15 transition"
+              className="w-24 shrink-0 tmr-num rounded-[12px] border border-stone-300/80 bg-white px-3 py-2.5 text-base text-stone-900 placeholder:text-stone-400 focus:border-amber-600 focus:outline-none focus:ring-4 focus:ring-amber-600/15 transition-[border-color,box-shadow] duration-150"
               value={tier.pricePerUnit}
               onChange={(e) => updateTier(i, 'pricePerUnit', e.target.value)}
             />
@@ -1805,7 +2050,7 @@ function SettingsTab({ app }) {
               type="button"
               onClick={() => removePriceTier(i)}
               disabled={form.defaultPrices.tiers.length <= 1}
-              className="shrink-0 rounded-lg px-2 py-1 text-sm text-rose-700 hover:bg-rose-50 disabled:opacity-30"
+              className="tmr-press shrink-0 rounded-full px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-30"
               aria-label="הסרת מדרגה"
             >
               הסר
@@ -1813,14 +2058,14 @@ function SettingsTab({ app }) {
           </div>
         ))}
         <Button variant="subtle" onClick={addPriceTier}>הוספת מדרגת כמות</Button>
-        <div className="rounded-lg bg-stone-50 p-3 text-xs text-stone-500">
+        <div className="rounded-[12px] bg-stone-50 p-3.5 text-xs text-stone-500">
           לדוגמה עם ההגדרות הנוכחיות: 1 = {fmtCurrency(calcAmount(form.defaultPrices, 1))} · 4 = {fmtCurrency(calcAmount(form.defaultPrices, 4))} · 10 = {fmtCurrency(calcAmount(form.defaultPrices, 10))}
         </div>
       </Card>
 
       <div className="flex items-center gap-3">
         <Button onClick={handleSaveSettings}>שמירת הגדרות</Button>
-        {saved && <span className="text-sm text-emerald-700">נשמר ✓</span>}
+        {saved && <span className="text-sm font-medium text-emerald-700">נשמר ✓</span>}
       </div>
     </div>
   );
@@ -2068,6 +2313,14 @@ export default function App() {
     [ordersBySaleId, loadOrdersForSale]
   );
 
+  // מחיקה לצמיתות של הזמנה אחת. מסירים אותה מה-state רק אחרי שהשרת אישר
+  // את המחיקה - אם המחיקה נכשלה, ההזמנה נשארת ברשימה כמו שהיא.
+  const deleteOrder = useCallback(async (saleId, orderId) => {
+    await adminDeleteOrder(orderId);
+    setOrdersBySaleId((m) => ({ ...m, [saleId]: (m[saleId] || []).filter((o) => o.id !== orderId) }));
+    notify('ההזמנה נמחקה לצמיתות');
+  }, []);
+
   const saveSettings = useCallback(async (newSettings) => {
     await adminSaveSettings(newSettings);
   }, []);
@@ -2133,6 +2386,7 @@ export default function App() {
     loadOrdersForSale,
     updateOrder,
     bulkUpdateOrders,
+    deleteOrder,
     saveSettings,
     createSale,
     closeSale,
@@ -2147,7 +2401,7 @@ export default function App() {
   };
 
   return (
-    <div dir="rtl" lang="he" className="tmr-root min-h-screen bg-amber-50">
+    <div dir="rtl" lang="he" className="tmr-root min-h-screen bg-stone-50">
       <GlobalStyle />
       {loading ? (
         <Spinner />
