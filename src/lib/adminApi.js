@@ -225,6 +225,21 @@ export async function adminBulkUpdateOrders(orderIds, patch) {
   if (error) throw error
 }
 
+// מחיקת הזמנה לצמיתות. עוברת דרך ה-RPC admin_delete_order (SECURITY
+// DEFINER, בודק is_admin() בעצמו) ומוחקת שורה אחת בלבד מטבלת orders לפי
+// id. לא נוגעת ב-customers, ב-sales או בהזמנות אחרות. נכשלת (throw) אם
+// ההזמנה לא נמצאה או שאין הרשאה - ואז ה-UI לא מסיר אותה מהרשימה.
+export async function adminDeleteOrder(orderId) {
+  if (!UUID_RE.test(orderId)) {
+    throw new Error('adminDeleteOrder: invalid order id')
+  }
+
+  const { data, error } = await supabase.rpc('admin_delete_order', { p_order_id: orderId })
+
+  if (error) throw error
+  return data
+}
+
 export async function adminCloseSale(saleId) {
   const { error } = await supabase
     .from('sales')
