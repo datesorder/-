@@ -1275,18 +1275,19 @@ function OrdersTab({ app, saleId, initialPreset, readOnlyBanner }) {
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1.5">
                   <span className="tmr-num text-[15px] font-semibold text-stone-900">{fmtCurrency(o.amount)}</span>
-                  <div className="flex gap-1">
-                    <Badge tone={o.paymentStatus === 'paid' ? 'green' : 'red'}>
-                      {o.paymentStatus === 'paid' && o.paymentMethod === 'bit'
-                        ? 'ביט'
-                        : o.paymentStatus === 'paid' && o.paymentMethod === 'paybox'
-                          ? 'פייבוקס'
-                          : paymentStatusDisplay(o)}
-                    </Badge>
-                    {o.orderStatus !== 'pending_pickup' && o.orderStatus !== 'delivered' && (
-                      <Badge tone={orderStatusMeta(o.orderStatus).tone}>{orderStatusMeta(o.orderStatus).label}</Badge>
-                    )}
-                  </div>
+                  {/* תצוגה בלבד: תגית תשלום רק להזמנה ששולמה ב-Bit/PayBox. הזמנה
+                      שלא שולמה מוצגת דרך הכפתור "טרם שולם", ומזומן/אחר ששולם -
+                      דרך התווית "שולם" שמתחת. כך כל סטטוס מוצג פעם אחת בלבד. */}
+                  {((o.paymentStatus === 'paid' && (o.paymentMethod === 'bit' || o.paymentMethod === 'paybox')) ||
+                    (o.orderStatus !== 'pending_pickup' && o.orderStatus !== 'delivered')) && (
+                    <div className="flex gap-1">
+                      {o.paymentStatus === 'paid' && o.paymentMethod === 'bit' && <Badge tone="green">ביט</Badge>}
+                      {o.paymentStatus === 'paid' && o.paymentMethod === 'paybox' && <Badge tone="green">פייבוקס</Badge>}
+                      {o.orderStatus !== 'pending_pickup' && o.orderStatus !== 'delivered' && (
+                        <Badge tone={orderStatusMeta(o.orderStatus).tone}>{orderStatusMeta(o.orderStatus).label}</Badge>
+                      )}
+                    </div>
+                  )}
                   {o.orderStatus === 'pending_pickup' && (
                     <button
                       type="button"
@@ -1312,10 +1313,16 @@ function OrdersTab({ app, saleId, initialPreset, readOnlyBanner }) {
                         e.stopPropagation();
                         app.updateOrder(saleId, o.id, { paymentStatus: 'paid' });
                       }}
-                      className="tmr-press mt-0.5 rounded-full bg-amber-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-800"
+                      aria-label="סמן שההזמנה שולמה"
+                      className="tmr-press mt-0.5 min-w-[88px] rounded-full bg-rose-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-800"
                     >
-                      ✓ סומן כשולם
+                      טרם שולם
                     </button>
+                  )}
+                  {o.paymentStatus === 'paid' && o.paymentMethod !== 'bit' && o.paymentMethod !== 'paybox' && (
+                    <span className="mt-0.5 inline-flex min-w-[88px] items-center justify-center rounded-full bg-emerald-100 px-3 py-1.5 text-xs font-semibold text-emerald-800">
+                      שולם
+                    </span>
                   )}
                 </div>
               </div>
