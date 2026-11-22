@@ -1276,8 +1276,16 @@ function OrdersTab({ app, saleId, initialPreset, readOnlyBanner }) {
                 <div className="flex shrink-0 flex-col items-end gap-1.5">
                   <span className="tmr-num text-[15px] font-semibold text-stone-900">{fmtCurrency(o.amount)}</span>
                   <div className="flex gap-1">
-                    <Badge tone={o.paymentStatus === 'paid' ? 'green' : 'red'}>{paymentStatusDisplay(o)}</Badge>
-                    <Badge tone={orderStatusMeta(o.orderStatus).tone}>{orderStatusMeta(o.orderStatus).label}</Badge>
+                    <Badge tone={o.paymentStatus === 'paid' ? 'green' : 'red'}>
+                      {o.paymentStatus === 'paid' && o.paymentMethod === 'bit'
+                        ? 'ביט'
+                        : o.paymentStatus === 'paid' && o.paymentMethod === 'paybox'
+                          ? 'פייבוקס'
+                          : paymentStatusDisplay(o)}
+                    </Badge>
+                    {o.orderStatus !== 'pending_pickup' && o.orderStatus !== 'delivered' && (
+                      <Badge tone={orderStatusMeta(o.orderStatus).tone}>{orderStatusMeta(o.orderStatus).label}</Badge>
+                    )}
                   </div>
                   {o.orderStatus === 'pending_pickup' && (
                     <button
@@ -1286,10 +1294,16 @@ function OrdersTab({ app, saleId, initialPreset, readOnlyBanner }) {
                         e.stopPropagation();
                         app.updateOrder(saleId, o.id, { orderStatus: 'delivered' });
                       }}
-                      className="tmr-press mt-0.5 rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
+                      aria-label="סמן שההזמנה נמסרה"
+                      className="tmr-press mt-0.5 min-w-[88px] rounded-full bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700"
                     >
-                      ✓ נמסרה
+                      טרם נמסרה
                     </button>
+                  )}
+                  {o.orderStatus === 'delivered' && (
+                    <span className="mt-0.5 inline-flex min-w-[88px] items-center justify-center rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white">
+                      נמסרה
+                    </span>
                   )}
                   {o.paymentStatus !== 'paid' && (
                     <button
